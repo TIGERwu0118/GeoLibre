@@ -10,6 +10,7 @@ import {
   maplibreMiningPlugin,
   mergeMiningSettings,
   MINE_AREA_BOUNDS,
+  MINING_COG_LAYER_OPTIONS,
   MINING_PLUGIN_ID,
   MINE_LAYER_NAME,
   MINE_LAYER_STYLE,
@@ -82,6 +83,12 @@ test("imagery layer name carries the mosaic year", () => {
   assert.equal(miningImageryLayerName("2024"), "吉林一号2024一张图");
   assert.notEqual(miningImageryLayerName("2023"), miningImageryLayerName("2024"));
   assert.ok(MINE_LAYER_NAME.includes("红线"));
+});
+
+test("COG load pins rescale to the full Byte range so natural colors survive", () => {
+  // Without an explicit rescale the GPU renderer auto-applies a per-band
+  // 2–98% percentile stretch to 8-bit imagery, shifting the whole tone.
+  assert.deepEqual(MINING_COG_LAYER_OPTIONS, { rescaleMin: 0, rescaleMax: 255 });
 });
 
 test("plugin registers the right panel without touching the DOM until render", () => {

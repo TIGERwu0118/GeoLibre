@@ -69,6 +69,15 @@ export const BUFFER_LAYER_STYLE = {
   fillOpacity: 0.04,
 } as const;
 
+/** Render state passed to addCogLayer for the imagery COG. The GPU renderer
+ * auto-stretches each band to its 2–98% percentile once its background stats
+ * sample lands, which destroys natural color on 8-bit imagery; pinning
+ * rescale to the full Byte range keeps it the identity mapping. */
+export const MINING_COG_LAYER_OPTIONS = {
+  rescaleMin: 0,
+  rescaleMax: 255,
+} as const;
+
 /** Panel state persisted to localStorage (credentials live here, not in git). */
 export interface MiningPanelSettings {
   mineUrl: string;
@@ -492,7 +501,11 @@ function buildPanel(container: HTMLElement): () => void {
     }
     status.textContent = `${labels.loadCog}…`;
     appRef
-      .addCogLayer(url.split("/").pop()?.split("?")[0] || "GeoTIFF", url)
+      .addCogLayer(
+        url.split("/").pop()?.split("?")[0] || "GeoTIFF",
+        url,
+        { ...MINING_COG_LAYER_OPTIONS },
+      )
       .then((id) => {
         trackedLayerIds.add(id);
         status.textContent = labels.added(url.split("/").pop()?.split("?")[0] || "GeoTIFF");
