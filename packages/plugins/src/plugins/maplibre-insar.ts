@@ -10,6 +10,7 @@
  */
 
 import { useAppStore } from "@geolibre/core";
+import type { KerchunkRefs } from "./kerchunk-reference-store";
 import type { GeoLibreAppAPI, GeoLibrePlugin } from "../types";
 
 export const INSAR_PLUGIN_ID = "maplibre-insar";
@@ -93,6 +94,8 @@ export interface InsarLabels {
   pickActive: string;
   pickHeading: (product: string) => string;
   pickFailed: (error: string) => string;
+  pickViaKerchunk: string;
+  pickViaServer: string;
   downloadHeading: string;
   downloadCheck: string;
   downloadIdle: string;
@@ -141,6 +144,8 @@ const DEFAULT_LABELS: InsarLabels = {
   pickActive: "📍 点选中（点地图取点 / 再点关闭）",
   pickHeading: (product) => `点位时序 · ${product}`,
   pickFailed: (error) => `取点失败：${error}`,
+  pickViaKerchunk: "kerchunk 直读",
+  pickViaServer: "服务端读取",
   downloadHeading: "下载编排（SLC → NAS）",
   downloadCheck: "查看下载状态",
   downloadIdle: "未运行",
@@ -226,6 +231,69 @@ export function insarBoundsFromGeo(
   ];
 }
 
+/**
+ * Nearest pixel of a lat/lon inside a product grid (same affine math as the
+ * sidecar's `/timeseries` endpoint), or null when the point is outside.
+ */
+export function insarPixelIndex(
+  geo: InsarGeo | null | undefined,
+  lat: number,
+  lon: number,
+): { row: number; col: number } | null {
+  const { x_first, y_first, x_step, y_step, length, width } = geo ?? {};
+  if (
+    typeof x_first !== "number" ||
+    typeof y_first !== "number" ||
+    typeof x_step !== "number" ||
+    typeof y_step !== "number" ||
+    typeof length !== "number" ||
+    typeof width !== "number" ||
+    x_step === 0 ||
+    y_step === 0
+  ) {
+    return null;
+  }
+  const col = Math.trunc((lon - x_first) / x_step);
+  const row = Math.trunc((y_first - lat) / -y_step);
+  if (!Number.isInteger(row) || !Number.isInteger(col)) return null;
+  if (row < 0 || col < 0 || row >= length || col >= width) return null;
+  return { row, col };
+}
+
+/**
+ * Address of one pixel on one date inside a chunked `timeseries` array:
+ * the chunk key (`timeseries/<date>.<rowChunk>.<colChunk>`) plus the pixel's
+ * element offset inside that chunk.
+ */
+export function insarChunkAddress(
+  shape: number[],
+  chunks: number[],
+  date: number,
+  row: number,
+  col: number,
+): { key: string; elementOffset: number } | null {
+  const [nDates, nRows, nCols] = shape;
+  const [, chunkRows, chunkCols] = chunks;
+  if (
+    !Number.isInteger(nDates) ||
+    !Number.isInteger(nRows) ||
+    !Number.isInteger(nCols) ||
+    !Number.isInteger(chunkRows) ||
+    !Number.isInteger(chunkCols) ||
+    chunkRows <= 0 ||
+    chunkCols <= 0
+  ) {
+    return null;
+  }
+  if (date < 0 || date >= nDates || row < 0 || row >= nRows || col < 0 || col >= nCols) {
+    return null;
+  }
+  return {
+    key: `timeseries/${date}.${Math.floor(row / chunkRows)}.${Math.floor(col / chunkCols)}`,
+    elementOffset: (row % chunkRows) * chunkCols + (col % chunkCols),
+  };
+}
+
 /** Symbology per snapshot kind (mine deformation: ±8 cm/yr diverging ramp). */
 const KIND_STYLE: Record<InsarRasterKind, { label: string; colormap: string; rescale: [number, number] }> = {
   velocity: { label: "速度场", colormap: "RdYlBu", rescale: [-0.08, 0.08] },
@@ -293,7 +361,19 @@ function buildPanel(container: HTMLElement): () => void {
   root.append(intro, apiRow, status, listHeading, list, tsSection, dlSection);
   container.append(root);
 
-  let tsState: { layerId: string; dates: string[]; index: number; productId: string } | null = null;
+  // 时序浏览 + 点位直读状态。refs/zarray/geo 齐备时取点走浏览器 kerchunk
+  // chunk 读（复用图层 manifest，chunk 级缓存），否则回落服务端 /timeseries。
+  interface TsPanelState {
+    layerId: string;
+    dates: string[];
+    index: number;
+    productId: string;
+    geo?: InsarGeo | null;
+    refs?: Record<string, unknown> | null;
+    zarray?: { shape: number[]; chunks: number[]; dtype?: string } | null;
+    chunkViews?: Map<string, Promise<DataView>>;
+  }
+  let tsState: TsPanelState | null = null;
   let tsSelectorTimer: ReturnType<typeof setTimeout> | null = null;
   let pickHandler: ((event: { lngLat: { lat: number; lng: number } }) => void) | null = null;
 
@@ -390,6 +470,7 @@ function buildPanel(container: HTMLElement): () => void {
     lon: number,
     dates: string[],
     values: (number | null)[],
+    source?: string,
   ): void => {
     if (!tsState) return;
     const chart = document.createElement("canvas");
@@ -399,7 +480,7 @@ function buildPanel(container: HTMLElement): () => void {
     title.textContent = labels.pickHeading(productId);
     const coords = document.createElement("span");
     coords.style.cssText = "opacity:0.75;font-size:11px;";
-    coords.textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    coords.textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}${source ? ` · ${source}` : ""}`;
     head.append(title, coords);
     const holder = document.createElement("div");
     holder.style.cssText = "display:flex;flex-direction:column;gap:4px;";
@@ -407,9 +488,71 @@ function buildPanel(container: HTMLElement): () => void {
     pointChartHost.replaceChildren(holder);
   };
 
+  /** 取一个 chunk 的 DataView（按 chunk 键缓存，失败不缓存以便重试）。 */
+  const chunkView = (
+    current: TsPanelState,
+    key: string,
+    ref: [string, number, number],
+  ): Promise<DataView> => {
+    const cache = (current.chunkViews ??= new Map());
+    let entry = cache.get(key);
+    if (!entry) {
+      entry = (async () => {
+        const [url, offset, length] = ref;
+        const response = await fetch(url, {
+          headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+          signal: AbortSignal.timeout(20000),
+        });
+        if (response.status !== 206 && response.status !== 200) {
+          throw new Error(`chunk read failed: HTTP ${response.status}`);
+        }
+        return new DataView(await response.arrayBuffer());
+      })();
+      cache.set(key, entry);
+      entry.catch(() => cache.delete(key));
+    }
+    return entry;
+  };
+
+  /** 浏览器直读一个像元的全日期位移列（float32 little-endian）。 */
+  const readPointViaKerchunk = async (
+    current: TsPanelState,
+    row: number,
+    col: number,
+  ): Promise<(number | null)[]> => {
+    const { shape, chunks } = current.zarray!;
+    const values: (number | null)[] = [];
+    for (let date = 0; date < shape[0]; date++) {
+      const address = insarChunkAddress(shape, chunks, date, row, col);
+      if (!address) throw new Error("pixel outside the timeseries array");
+      const ref = current.refs![address.key];
+      if (!Array.isArray(ref) || ref.length < 3) {
+        values.push(0); // 缺失 chunk 按 fill_value=0
+        continue;
+      }
+      const view = await chunkView(current, address.key, ref as [string, number, number]);
+      values.push(view.getFloat32(address.elementOffset * 4, true));
+    }
+    return values;
+  };
+
   const onPointPicked = async (lat: number, lon: number): Promise<void> => {
     const current = tsState;
     if (!current) return;
+    // 直读优先：refs + .zarray + geo 齐备且 dtype 是 <f4 时浏览器按 chunk 读列。
+    const meta = current.zarray;
+    if (current.refs && meta && meta.dtype === "<f4" && meta.shape?.length === 3 && meta.chunks?.length === 3 && current.geo) {
+      const idx = insarPixelIndex(current.geo, lat, lon);
+      if (idx) {
+        try {
+          const values = await readPointViaKerchunk(current, idx.row, idx.col);
+          renderPointChart(current.productId, lat, lon, current.dates, values, labels.pickViaKerchunk);
+          return;
+        } catch {
+          /* 落回服务端端点（其错误信息也更友好） */
+        }
+      }
+    }
     try {
       const response = await fetch(
         `${state.apiBase.replace(/\/+$/, "")}/timeseries/${encodeURIComponent(current.productId)}?lat=${lat}&lon=${lon}`,
@@ -423,7 +566,7 @@ function buildPanel(container: HTMLElement): () => void {
       if (!response.ok || !data?.dates || !data.values_m) {
         throw new Error(data?.detail?.message ?? `HTTP ${response.status}`);
       }
-      renderPointChart(current.productId, lat, lon, data.dates, data.values_m);
+      renderPointChart(current.productId, lat, lon, data.dates, data.values_m, labels.pickViaServer);
     } catch (error) {
       status.textContent = labels.pickFailed(error instanceof Error ? error.message : String(error));
     }
@@ -501,6 +644,7 @@ function buildPanel(container: HTMLElement): () => void {
     statusLine.textContent = labels.loading(row.id, labels.loadTimeseries);
     try {
       let bounds: [number, number, number, number] | null = null;
+      let geo: InsarGeo | null | undefined;
       let dates: string[] = row.dates ?? [];
       try {
         const detail = await fetch(
@@ -511,22 +655,56 @@ function buildPanel(container: HTMLElement): () => void {
           const detailJson = (await detail.json()) as {
             product?: { geo?: InsarGeo; dates?: string[] };
           };
-          bounds = insarBoundsFromGeo(detailJson.product?.geo);
+          geo = detailJson.product?.geo;
+          bounds = insarBoundsFromGeo(geo);
           const detailDates = detailJson.product?.dates;
           if (Array.isArray(detailDates) && detailDates.length > 0) dates = detailDates;
         }
       } catch {
         /* bounds/dates are best-effort */
       }
+      // manifest 只下载一次：渲染复用（options.refs 免二次拉取），点选直读也用它。
+      const manifestUrl = insarManifestUrl(state.apiBase, row.id);
+      let refs: Record<string, unknown> | null = null;
+      let zarray: TsPanelState["zarray"] = null;
+      try {
+        const manifestResponse = await fetch(manifestUrl, { signal: AbortSignal.timeout(20000) });
+        if (manifestResponse.ok) {
+          const doc = (await manifestResponse.json()) as {
+            refs?: Record<string, unknown>;
+            insar?: { dates?: string[] };
+          };
+          const zarrayRaw = doc.refs?.["timeseries/.zarray"];
+          if (doc.refs && typeof zarrayRaw === "string") {
+            const parsed = JSON.parse(zarrayRaw) as {
+              shape?: unknown;
+              chunks?: unknown;
+              dtype?: unknown;
+            };
+            if (Array.isArray(parsed.shape) && Array.isArray(parsed.chunks)) {
+              refs = doc.refs;
+              zarray = {
+                shape: parsed.shape as number[],
+                chunks: parsed.chunks as number[],
+                dtype: typeof parsed.dtype === "string" ? parsed.dtype : undefined,
+              };
+              const manifestDates = doc.insar?.dates;
+              if (Array.isArray(manifestDates) && manifestDates.length > 0) dates = manifestDates;
+            }
+          }
+        }
+      } catch {
+        /* direct-read is optional; the render path fetches its own manifest */
+      }
       // 懒加载：共享 Zarr 渲染控件只在真正用时才进包。
       const { addCloudNetcdfLayer } = await import("./maplibre-components");
-      const manifestUrl = insarManifestUrl(state.apiBase, row.id);
       await addCloudNetcdfLayer(appRef!, {
         url: manifestUrl,
         variable: "timeseries",
         clim: [-0.05, 0.05],
         colormap: "RdYlBu",
         ...(bounds ? { bounds } : {}),
+        ...(refs ? { refs: refs as KerchunkRefs } : {}),
       });
       // addCloudNetcdfLayer 不回传图层 id：按 manifest URL 在 store 里找刚加的图层。
       const layers = useAppStore.getState().layers;
@@ -539,7 +717,16 @@ function buildPanel(container: HTMLElement): () => void {
             return typeof url === "string" && url.includes(manifestSuffix);
           }) ?? [...layers].reverse().find((layer) => layer.type === "zarr") ?? null;
       if (!added) throw new Error(labels.tsLayerMissing);
-      tsState = { layerId: added.id, dates, index: 0, productId: row.id };
+      tsState = {
+        layerId: added.id,
+        dates,
+        index: 0,
+        productId: row.id,
+        geo: geo ?? null,
+        refs,
+        zarray,
+        chunkViews: new Map(),
+      };
       renderTsControls();
       if (bounds) appRef?.fitBounds?.(bounds);
       statusLine.textContent = labels.tsLoaded(row.id, dates.length);

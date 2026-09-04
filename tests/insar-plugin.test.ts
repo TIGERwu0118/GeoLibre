@@ -7,6 +7,8 @@ import {
   INSAR_DOWNLOAD_CONFIRM_PHRASE,
   INSAR_PLUGIN_ID,
   insarBoundsFromGeo,
+  insarChunkAddress,
+  insarPixelIndex,
   insarManifestUrl,
   insarRasterUrl,
   maplibreInsarPlugin,
@@ -95,4 +97,38 @@ test("download-start contract: fixed phrase mirrors the sidecar, arming is short
   // server refuses POST /download/start without the exact phrase.
   assert.equal(INSAR_DOWNLOAD_CONFIRM_PHRASE, "启动 SLC 下载");
   assert.ok(INSAR_DOWNLOAD_ARM_SECONDS >= 3 && INSAR_DOWNLOAD_ARM_SECONDS <= 10);
+});
+
+test("insarPixelIndex mirrors the sidecar's nearest-pixel affine", () => {
+  const geo = {
+    x_first: 113.3,
+    y_first: 34.9,
+    x_step: 0.0002,
+    y_step: -0.0002,
+    length: 1925,
+    width: 2415,
+  };
+  // 34.55: row = (34.9-34.55)/0.0002 = 1750; 113.95: col = (113.95-113.3)/0.0002 = 3250 ≥ width 2415 → 网格外
+  assert.equal(insarPixelIndex(geo, 34.55, 113.95), null);
+  // 网格内的点:row 1750 < 1925、col 1000 < 2415
+  assert.deepEqual(insarPixelIndex(geo, 34.55, 113.5), { row: 1750, col: 1000 });
+  assert.equal(insarPixelIndex(geo, 40, 113.5), null); // 网格外(北)
+  assert.equal(insarPixelIndex(null, 34.55, 113.5), null); // 缺 geo
+});
+
+test("insarChunkAddress maps a pixel to its chunk key and element offset", () => {
+  const shape = [9, 1925, 2415];
+  const chunks = [1, 121, 151];
+  assert.deepEqual(insarChunkAddress(shape, chunks, 0, 100, 200), {
+    key: "timeseries/0.0.1",
+    elementOffset: 100 * 151 + (200 - 151),  // col 200 已跨进第 2 个列 chunk
+  });
+  // 跨 chunk 边界的第一格
+  assert.deepEqual(insarChunkAddress(shape, chunks, 8, 121, 151), {
+    key: "timeseries/8.1.1",
+    elementOffset: 0,
+  });
+  assert.equal(insarChunkAddress(shape, chunks, 9, 0, 0), null); // 日期越界
+  assert.equal(insarChunkAddress(shape, chunks, 0, 1925, 0), null); // 行越界
+  assert.equal(insarChunkAddress(shape, chunks, 0, 0, -1), null); // 列越界
 });
