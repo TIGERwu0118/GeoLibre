@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 import {
   BUFFER_LAYER_STYLE,
+  cogLayersFromManifest,
   DEFAULT_BUFFER_GEOJSON_URL,
+  DEFAULT_COG_MANIFEST_URL,
   DEFAULT_LOCAL_IMAGERY_URL,
   DEFAULT_MINE_GEOJSON_URL,
   jl1TileUrlTemplate,
@@ -89,6 +91,29 @@ test("COG load pins rescale to the full Byte range so natural colors survive", (
   // Without an explicit rescale the GPU renderer auto-applies a per-band
   // 2–98% percentile stretch to 8-bit imagery, shifting the whole tone.
   assert.deepEqual(MINING_COG_LAYER_OPTIONS, { rescaleMin: 0, rescaleMax: 255 });
+});
+
+test("cogLayersFromManifest resolves batch-build entries and skips junk", () => {
+  const manifestUrl = "http://127.0.0.1:8767/geolibre-cogs/manifest.json";
+  const manifest = {
+    ET1: {
+      url: "/geolibre-cogs/ET1_2024_4326_cog.tif",
+      cog_file: "ET1_2024_4326_cog.tif",
+      mine_name: "某矿 A",
+    },
+    ET2: { cog_file: "ET2_2024_4326_cog.tif" }, // no url → cog_file, no name → ET_ID
+    broken: "not-an-object",
+    empty: {},
+  };
+  const refs = cogLayersFromManifest(manifest, manifestUrl);
+  assert.deepEqual(refs, [
+    { name: "某矿 A", url: "http://127.0.0.1:8767/geolibre-cogs/ET1_2024_4326_cog.tif" },
+    { name: "ET2", url: "http://127.0.0.1:8767/geolibre-cogs/ET2_2024_4326_cog.tif" },
+  ]);
+  assert.deepEqual(cogLayersFromManifest(null, manifestUrl), []);
+  assert.deepEqual(cogLayersFromManifest({ x: { url: "" } }, manifestUrl), []);
+  assert.equal(typeof DEFAULT_COG_MANIFEST_URL, "string");
+  assert.ok(mergeMiningSettings({}).cogManifestUrl.startsWith("http"));
 });
 
 test("plugin registers the right panel without touching the DOM until render", () => {

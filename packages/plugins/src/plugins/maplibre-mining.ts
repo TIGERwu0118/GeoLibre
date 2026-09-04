@@ -27,6 +27,8 @@ const PANEL_ID = "mining-overview-panel";
 
 export const DEFAULT_MINE_GEOJSON_URL = "http://127.0.0.1:8767/geolibre-mine/mine.geojson";
 export const DEFAULT_BUFFER_GEOJSON_URL = "http://127.0.0.1:8767/geolibre-mine/buf500.geojson";
+/** 50 矿批量 COG 的清单（batch_build_cogs.py 产出，8767 出口）。 */
+export const DEFAULT_COG_MANIFEST_URL = "http://127.0.0.1:8767/geolibre-cogs/manifest.json";
 /**
  * 默认影像源：服务器端 jilin1 矿区瓦片服务（tmux `mineserver`，127.0.0.1:9194，
  * Mac 经 SSH 隧道访问）。`/all/{z}/{x}/{y}.png` 是 50 个矿区金字塔的合并视图
@@ -78,6 +80,50 @@ export const MINING_COG_LAYER_OPTIONS = {
   rescaleMax: 255,
 } as const;
 
+export interface MiningCogLayerRef {
+  /** Display name: the mine's Chinese name, falling back to its ET_ID. */
+  name: string;
+  /** Absolute COG URL resolved against the manifest's own address. */
+  url: string;
+}
+
+/**
+ * Parse the batch-build manifest (`batch_build_cogs.py` output: an object
+ * keyed by ET_ID, each holding `url`/`cog_file`, `mine_name`, …) into
+ * addCogLayer-ready refs. Malformed entries are skipped; entry order is
+ * preserved.
+ */
+export function cogLayersFromManifest(
+  manifest: unknown,
+  manifestUrl: string,
+): MiningCogLayerRef[] {
+  if (!manifest || typeof manifest !== "object") return [];
+  const refs: MiningCogLayerRef[] = [];
+  for (const [etId, value] of Object.entries(manifest as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+    const rawUrl =
+      typeof entry.url === "string" && entry.url.trim()
+        ? entry.url.trim()
+        : typeof entry.cog_file === "string" && entry.cog_file.trim()
+          ? entry.cog_file.trim()
+          : "";
+    if (!rawUrl) continue;
+    let url: string;
+    try {
+      url = new URL(rawUrl, manifestUrl).toString();
+    } catch {
+      continue;
+    }
+    const name =
+      typeof entry.mine_name === "string" && entry.mine_name.trim()
+        ? entry.mine_name.trim()
+        : etId;
+    refs.push({ name, url });
+  }
+  return refs;
+}
+
 /** Panel state persisted to localStorage (credentials live here, not in git). */
 export interface MiningPanelSettings {
   mineUrl: string;
@@ -88,6 +134,8 @@ export interface MiningPanelSettings {
   imageryMode: MiningImageryMode;
   /** 可选：GeoTIFF/COG 直载地址（SAM3 分割的输入图层）。 */
   cogUrl: string;
+  /** 50 矿批量 COG 清单地址（加载全部矿区 COG 按钮的数据源）。 */
+  cogManifestUrl: string;
   year: MiningTileYear;
   tk: string;
   mkByYear: Record<MiningTileYear, string>;
@@ -100,6 +148,7 @@ export function defaultMiningSettings(): MiningPanelSettings {
     imageryUrl: DEFAULT_LOCAL_IMAGERY_URL,
     imageryMode: "local",
     cogUrl: "",
+    cogManifestUrl: DEFAULT_COG_MANIFEST_URL,
     year: "2024",
     tk: "",
     mkByYear: { "2022": "", "2023": "", "2024": "" },
@@ -121,6 +170,9 @@ export function mergeMiningSettings(stored: unknown): MiningPanelSettings {
     base.imageryUrl = raw.imageryUrl.trim();
   }
   if (typeof raw.cogUrl === "string") base.cogUrl = raw.cogUrl.trim();
+  if (typeof raw.cogManifestUrl === "string" && raw.cogManifestUrl.trim()) {
+    base.cogManifestUrl = raw.cogManifestUrl.trim();
+  }
   if (raw.imageryMode === "local" || raw.imageryMode === "api") base.imageryMode = raw.imageryMode;
   if (isMiningTileYear(raw.year)) base.year = raw.year;
   if (typeof raw.tk === "string") base.tk = raw.tk.trim();
@@ -188,6 +240,12 @@ export interface MiningLabels {
   imageryUrlLabel: string;
   cogUrlLabel: string;
   loadCog: string;
+  manifestUrlLabel: string;
+  loadAllCogs: string;
+  cogManifestFetching: string;
+  cogManifestEmpty: string;
+  cogProgress: (done: number, total: number) => string;
+  cogSummary: (added: number, skipped: number, failed: number) => string;
   hostMissingCogApi: string;
   saved: string;
   statusIdle: string;
@@ -223,6 +281,13 @@ const DEFAULT_LABELS: MiningLabels = {
   imageryUrlLabel: "本地瓦片服务 XYZ 模板",
   cogUrlLabel: "GeoTIFF（COG）地址",
   loadCog: "加载 GeoTIFF 图层",
+  manifestUrlLabel: "50 矿 COG 清单地址（manifest.json）",
+  loadAllCogs: "加载全部矿区 COG",
+  cogManifestFetching: "正在读取 COG 清单…",
+  cogManifestEmpty: "COG 清单为空或格式不对",
+  cogProgress: (done, total) => `加载矿区 COG ${done}/${total}…`,
+  cogSummary: (added, skipped, failed) =>
+    `批量 COG 完成：新加 ${added}，已存在跳过 ${skipped}，失败 ${failed}`,
   hostMissingCogApi: "宿主未提供 addCogLayer 接口",
   saved: "已保存",
   statusIdle: "未加载图层",
@@ -382,11 +447,16 @@ function buildPanel(container: HTMLElement): () => void {
   addField(labels.bufferUrlLabel, settings.bufferUrl, (v) => (settings.bufferUrl = v));
   addField(labels.imageryUrlLabel, settings.imageryUrl, (v) => (settings.imageryUrl = v));
   addField(labels.cogUrlLabel, settings.cogUrl, (v) => (settings.cogUrl = v));
+  addField(labels.manifestUrlLabel, settings.cogManifestUrl, (v) => (settings.cogManifestUrl = v));
   const loadCog = document.createElement("button");
   loadCog.type = "button";
   loadCog.textContent = labels.loadCog;
   loadCog.style.cssText = BUTTON_STYLE;
-  credsBody.append(loadCog);
+  const loadAllCogs = document.createElement("button");
+  loadAllCogs.type = "button";
+  loadAllCogs.textContent = labels.loadAllCogs;
+  loadAllCogs.style.cssText = BUTTON_STYLE;
+  credsBody.append(loadCog, loadAllCogs);
 
   yearSelect.addEventListener("change", () => {
     const value = yearSelect.value;
@@ -516,6 +586,69 @@ function buildPanel(container: HTMLElement): () => void {
           error instanceof Error ? error.message : String(error),
         );
       });
+  });
+
+  loadAllCogs.addEventListener("click", () => {
+    const manifestUrl = settings.cogManifestUrl.trim();
+    if (!/^https?:\/\//i.test(manifestUrl)) {
+      status.textContent = labels.failed(labels.loadAllCogs, "需 http(s) 清单地址");
+      return;
+    }
+    if (typeof appRef?.addCogLayer !== "function") {
+      status.textContent = labels.hostMissingCogApi;
+      return;
+    }
+    status.textContent = labels.cogManifestFetching;
+    loadAllCogs.disabled = true;
+    const finish = () => {
+      loadAllCogs.disabled = false;
+    };
+    fetch(manifestUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then(async (manifest: unknown) => {
+        const items = cogLayersFromManifest(manifest, manifestUrl);
+        if (!items.length) {
+          status.textContent = labels.cogManifestEmpty;
+          return;
+        }
+        let added = 0;
+        let skipped = 0;
+        let failed = 0;
+        // Sequential on purpose: 50 concurrent COG adds would stampede the
+        // renderer's per-layer stats sampling; one at a time keeps the map
+        // responsive and the status line meaningful.
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          status.textContent = `${labels.cogProgress(i + 1, items.length)} ${item.name}`;
+          if (layerByName(item.name)) {
+            skipped++;
+            continue;
+          }
+          try {
+            const id = await appRef!.addCogLayer!(
+              item.name,
+              item.url,
+              { ...MINING_COG_LAYER_OPTIONS },
+            );
+            trackedLayerIds.add(id);
+            added++;
+          } catch {
+            failed++;
+          }
+        }
+        status.textContent = labels.cogSummary(added, skipped, failed);
+        if (added > 0) appRef?.fitBounds?.(MINE_AREA_BOUNDS);
+      })
+      .catch((error: unknown) => {
+        status.textContent = labels.failed(
+          labels.loadAllCogs,
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .finally(finish);
   });
 
   zoomArea.addEventListener("click", () => {
