@@ -527,7 +527,7 @@ function beginBoxDraw(done: () => void, onProgress?: () => void): (() => void) |
   return cleanup;
 }
 
-async function rasterProjection(bytes: ArrayBuffer): Promise<string | null> {
+export async function rasterProjection(bytes: ArrayBuffer): Promise<string | null> {
   try {
     const image = await (await fromArrayBuffer(bytes)).getImage();
     const keys = image.getGeoKeys() as Record<string, unknown>;

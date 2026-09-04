@@ -365,7 +365,6 @@ export interface AppState {
     loadEditorFeaturesLayerId: string | null;
     pythonConsoleOpen: boolean;
     notebookOpen: boolean;
-    assistantOpen: boolean;
     attributeTableOpen: boolean;
     /** Whether the Raster Attribute Table bottom panel is open (issue #1307). */
     rasterAttributeTableOpen: boolean;
@@ -501,7 +500,6 @@ export interface AppState {
   setLoadEditorFeaturesOpen: (open: boolean, layerId?: string | null) => void;
   setPythonConsoleOpen: (open: boolean) => void;
   setNotebookOpen: (open: boolean) => void;
-  setAssistantOpen: (open: boolean) => void;
   setAttributeTableOpen: (open: boolean) => void;
   setRasterAttributeTableOpen: (open: boolean) => void;
   setDashboardOpen: (open: boolean) => void;
@@ -1143,7 +1141,6 @@ export const useAppStore = create<AppState>()(
         loadEditorFeaturesLayerId: null,
         pythonConsoleOpen: false,
         notebookOpen: false,
-        assistantOpen: false,
         attributeTableOpen: false,
         rasterAttributeTableOpen: false,
         dashboardOpen: false,
@@ -1463,7 +1460,6 @@ export const useAppStore = create<AppState>()(
         })),
       setPythonConsoleOpen: (open) => set((s) => ({ ui: { ...s.ui, pythonConsoleOpen: open } })),
       setNotebookOpen: (open) => set((s) => ({ ui: { ...s.ui, notebookOpen: open } })),
-      setAssistantOpen: (open) => set((s) => ({ ui: { ...s.ui, assistantOpen: open } })),
       setAttributeTableOpen: (open) => set((s) => ({ ui: { ...s.ui, attributeTableOpen: open } })),
       setRasterAttributeTableOpen: (open) =>
         set((s) => ({ ui: { ...s.ui, rasterAttributeTableOpen: open } })),

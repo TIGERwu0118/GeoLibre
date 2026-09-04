@@ -62,6 +62,7 @@ import {
   RotateCcw,
   Settings,
   SlidersHorizontal,
+  Sparkles,
   Sun,
   Terminal,
   Type,
@@ -100,6 +101,7 @@ import {
 import { useLanguage } from "../../hooks/useLanguage";
 import { BROWSER_PANEL_ID } from "../../hooks/useRegisterBrowserPanel";
 import { COMMENTS_PANEL_ID } from "../../hooks/useRegisterCommentsPanel";
+import { ASSISTANT_PANEL_ID } from "../../hooks/useRegisterAssistantPanel";
 import { useRightPanelState } from "../../hooks/useRightPanels";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import { isTauri } from "../../lib/is-tauri";
@@ -535,12 +537,13 @@ export function SettingsDialog({
   // not download from.
   const languagePackHost = languagePackBaseUrl();
   const languagePackDownloadsEnabled = languagePackHost.length > 0;
-  // Browser and Comments are dockable right panels: the registry owns whether
-  // they are on screen and `registerPersistedRightPanel` mirrors that into
-  // `layout.browserPanelVisible` / `layout.commentsPanelVisible`, so the toggle
-  // no longer resets on every launch (#1935). Because the mirror is the single
-  // writer, moving the panel is all these controls have to do: the setting
-  // follows, so the two can never disagree about what the checkbox should say.
+  // Browser, Comments, and Assistant are dockable right panels: the registry
+  // owns whether they are on screen and `registerPersistedRightPanel` mirrors
+  // that into `layout.browserPanelVisible` / `layout.commentsPanelVisible` /
+  // `layout.assistantPanelVisible`, so the toggle no longer resets on every
+  // launch (#1935). Because the mirror is the single writer, moving the panel
+  // is all these controls have to do: the setting follows, so the two can never
+  // disagree about what the checkbox should say.
   const rightPanelState = useRightPanelState();
   const browserPanelOpen = rightPanelState.visibleIds.includes(BROWSER_PANEL_ID);
   const commentsPanelOpen = rightPanelState.visibleIds.includes(COMMENTS_PANEL_ID);
@@ -1367,6 +1370,7 @@ export function SettingsDialog({
     // collapse one the user had expanded).
     applyRightPanelVisibility(BROWSER_PANEL_ID, draftDesktopSettings.layout.browserPanelVisible);
     applyRightPanelVisibility(COMMENTS_PANEL_ID, draftDesktopSettings.layout.commentsPanelVisible);
+    applyRightPanelVisibility(ASSISTANT_PANEL_ID, draftDesktopSettings.layout.assistantPanelVisible);
     setOpen(false);
   };
 
@@ -2260,6 +2264,20 @@ export function SettingsDialog({
                       />
                       <MessageSquare className="h-4 w-4 text-muted-foreground" />
                       <span>{t("settings.layout.showCommentsPanel")}</span>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={draftDesktopSettings.layout.assistantPanelVisible}
+                        onChange={(event) =>
+                          updateDraftLayoutSettings({
+                            assistantPanelVisible: event.target.checked,
+                          })
+                        }
+                      />
+                      <Sparkles className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showAssistantPanel")}</span>
                     </label>
                   </div>
                   {showsAdvancedNotices(desktopSettings.uiProfile) ? (

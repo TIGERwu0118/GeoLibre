@@ -1,5 +1,5 @@
 import { type NetworkToolKind, useAppCapability, useAppStore } from "@geolibre/core";
-import { isEarthEngineAvailable } from "@geolibre/plugins";
+import { isEarthEngineAvailable, openRightPanel } from "@geolibre/plugins";
 import {
   Button,
   DropdownMenu,
@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { isMobile } from "../../../lib/is-mobile";
 import type { ToolbarPanel } from "../../../hooks/useToolbarPanels";
 import type { ParseKeys } from "i18next";
+import { ASSISTANT_PANEL_ID } from "../../../hooks/useRegisterAssistantPanel";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
 import { masHidesMenuItem } from "../../../lib/mas-build";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
@@ -80,7 +81,6 @@ export function ProcessingMenu({
   const setSqlWorkspaceOpen = useAppStore((s) => s.setSqlWorkspaceOpen);
   const setPythonConsoleOpen = useAppStore((s) => s.setPythonConsoleOpen);
   const setNotebookOpen = useAppStore((s) => s.setNotebookOpen);
-  const setAssistantOpen = useAppStore((s) => s.setAssistantOpen);
   const setDashboardOpen = useAppStore((s) => s.setDashboardOpen);
   const setProcessingHistoryOpen = useAppStore((s) => s.setProcessingHistoryOpen);
   const processingCap = useAppCapability("processing:run");
@@ -183,7 +183,7 @@ export function ProcessingMenu({
         {show("processing.assistant") && (
           <>
             <DropdownMenuItem
-              onSelect={() => setAssistantOpen(true)}
+              onSelect={() => openRightPanel(ASSISTANT_PANEL_ID)}
               disabled={!assistantCap.granted}
               aria-describedby={assistantDeniedBy}
             >

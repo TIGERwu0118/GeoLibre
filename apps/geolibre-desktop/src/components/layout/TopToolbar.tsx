@@ -101,6 +101,7 @@ import { useConsentGatedActions } from "../../hooks/useConsentGatedActions";
 import { useOsmPbfLoader } from "../../hooks/useOsmPbfLoader";
 import type { ProjectFileActions } from "../../hooks/useProjectFileActions";
 import { useToolbarPanels } from "../../hooks/useToolbarPanels";
+import { ASSISTANT_PANEL_ID } from "../../hooks/useRegisterAssistantPanel";
 import { useVectorTileGeometryBackfill } from "../../hooks/useVectorTileGeometryBackfill";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import { isMobile } from "../../lib/is-mobile";
@@ -1060,7 +1061,6 @@ export function TopToolbar({
   const loadEditorFeaturesOpen = useAppStore((s) => s.ui.loadEditorFeaturesOpen);
   const loadEditorFeaturesLayerId = useAppStore((s) => s.ui.loadEditorFeaturesLayerId);
   const setPythonConsoleOpen = useAppStore((s) => s.setPythonConsoleOpen);
-  const setAssistantOpen = useAppStore((s) => s.setAssistantOpen);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const projectGeneration = useAppStore((s) => s.projectGeneration);
@@ -1534,7 +1534,7 @@ export function TopToolbar({
       group: t("toolbar.commandGroup.processing"),
       keywords: "assistant ai chat llm natural language gemini agent",
       icon: Sparkles,
-      run: () => setAssistantOpen(true),
+      run: () => openRightPanel(ASSISTANT_PANEL_ID),
     },
     {
       id: "proc.geocode",

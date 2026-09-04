@@ -15,13 +15,13 @@ import type { GeoLibreRightPanelRegistration } from "@geolibre/plugins";
 import { useDesktopSettingsStore, type DesktopLayoutSettings } from "../hooks/useDesktopSettings";
 
 /**
- * Layout settings that persist a dockable right panel's visibility. The Browser
- * and Comments panels are the two built-in panels that work this way; plugin
- * panels are owned by their plugin and are not persisted here.
+ * Layout settings that persist a dockable right panel's visibility. The Browser,
+ * Comments, and Assistant panels are the three built-in panels that work this
+ * way; plugin panels are owned by their plugin and are not persisted here.
  */
 export type PersistedPanelKey = Extract<
   keyof DesktopLayoutSettings,
-  "browserPanelVisible" | "commentsPanelVisible"
+  "browserPanelVisible" | "commentsPanelVisible" | "assistantPanelVisible"
 >;
 
 /** Read a panel's persisted visibility, bypassing React so callers can seed. */

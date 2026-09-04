@@ -2016,6 +2016,7 @@
       "showStylePanel": "显示样式面板",
       "showBrowserPanel": "显示浏览器面板",
       "showCommentsPanel": "显示评论面板",
+      "showAssistantPanel": "显示 AI 助手面板",
       "showAttributePanel": "显示属性面板",
       "urlParamsNote": "在共享查看器链接中存在时，URL 布局参数仍然生效。"
     },

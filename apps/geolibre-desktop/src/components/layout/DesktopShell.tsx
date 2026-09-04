@@ -68,6 +68,7 @@ import {
 import { createPortal } from "react-dom";
 import { BROWSER_PANEL_ID, useRegisterBrowserPanel } from "../../hooks/useRegisterBrowserPanel";
 import { COMMENTS_PANEL_ID, useRegisterCommentsPanel } from "../../hooks/useRegisterCommentsPanel";
+import { ASSISTANT_PANEL_ID, useRegisterAssistantPanel } from "../../hooks/useRegisterAssistantPanel";
 import { CommentsPanel } from "../comments/CommentsPanel";
 import { CommentMapOverlay } from "../comments/CommentMapOverlay";
 import { useCommentTool } from "../comments/useCommentTool";
@@ -750,6 +751,7 @@ export function DesktopShell({
   // into a dedicated content host (below) that the dock slots adopt.
   useRegisterBrowserPanel();
   useRegisterCommentsPanel();
+  useRegisterAssistantPanel();
   // One shared project-file-actions instance for both the toolbar and the
   // Browser panel, so their "open recent" calls coordinate their aborts (two
   // instances would race). Lifted here for the same reason as `collaboration`.
@@ -809,7 +811,22 @@ export function DesktopShell({
     el.className = "contents";
     return el;
   });
+  // A dedicated host for the Assistant panel's React portal.
+  const [assistantContentEl] = useState(() => {
+    const el = document.createElement("div");
+    el.className = "contents";
+    return el;
+  });
   const rightPanelState = useRightPanelState();
+  // The assistant panel's chat history lives in component state, so keep it
+  // mounted from first open onward (collapse/close only detaches the host
+  // element) instead of unmounting like a displaced Comments panel does.
+  const [assistantMounted, setAssistantMounted] = useState(false);
+  useEffect(() => {
+    if (rightPanelState.visibleIds.includes(ASSISTANT_PANEL_ID)) {
+      setAssistantMounted(true);
+    }
+  }, [rightPanelState.visibleIds]);
   const activePanelId = rightPanelState.activeId;
   const replaceStylePanelIds = rightPanelState.visibleIds.filter(
     (id) => rightPanelState.panelDocks[id] === "replace-style",
@@ -852,13 +869,16 @@ export function DesktopShell({
     enforceViewerPlugins();
   }, [enforceViewerPlugins]);
   // The dock slots adopt whichever host owns the active panel's content: the
-  // Browser's dedicated portal host, the Comments dedicated portal host, or the shared imperative plugin host.
+  // Browser's dedicated portal host, the Comments or Assistant dedicated portal
+  // hosts, or the shared imperative plugin host.
   const dockContentEl =
     activePanelId === BROWSER_PANEL_ID
       ? browserContentEl
       : activePanelId === COMMENTS_PANEL_ID
         ? commentsContentEl
-        : pluginContentEl;
+        : activePanelId === ASSISTANT_PANEL_ID
+          ? assistantContentEl
+          : pluginContentEl;
   // Render the active panel into the shared host once; re-run when its
   // registration is replaced (re-registration refresh) but not on dock/collapse
   // changes. Keyed on the render function identity so that a plugin
@@ -899,7 +919,6 @@ export function DesktopShell({
     setPluginPanelWidth(clampPluginPanelWidth(panel.defaultWidth ?? PLUGIN_PANEL_DEFAULT_WIDTH));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePanelId]);
-  const assistantOpen = useAppStore((s) => s.ui.assistantOpen);
   const dashboardOpen = useAppStore((s) => s.ui.dashboardOpen);
   const geometryEditLayerId = useSyncExternalStore(
     subscribeGeometryEdit,
@@ -2405,6 +2424,19 @@ export function DesktopShell({
               commentsContentEl,
             )
           : null}
+        {/* The Assistant panel's chat history lives in component state, so the
+            portal stays mounted from first open onward even when the panel is
+            collapsed onto its rail or displaced by another docked panel. */}
+        {assistantMounted && !layoutOptions.panelsHidden
+          ? createPortal(
+              <SectionErrorBoundary label="Assistant" displayName={t("shell.section.assistant")}>
+                <Suspense fallback={null}>
+                  <AssistantPanel mapControllerRef={mapControllerRef} />
+                </Suspense>
+              </SectionErrorBoundary>,
+              assistantContentEl,
+            )
+          : null}
         {/* Map-only / hidden-panels embeds show nothing but the map: skip the
             whole left side-dock (Layers, plugin panels, and the shared rail that
             hosts the Browser entry), not just the built-in Layers panel. */}
@@ -2851,13 +2883,6 @@ export function DesktopShell({
         >
           <Suspense fallback={null}>
             <SqlWorkspacePanel />
-          </Suspense>
-        </SectionErrorBoundary>
-      ) : null}
-      {assistantOpen ? (
-        <SectionErrorBoundary label="Assistant" displayName={t("shell.section.assistant")}>
-          <Suspense fallback={null}>
-            <AssistantPanel mapControllerRef={mapControllerRef} />
           </Suspense>
         </SectionErrorBoundary>
       ) : null}

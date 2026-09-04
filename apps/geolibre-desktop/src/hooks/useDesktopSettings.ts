@@ -131,6 +131,8 @@ export interface DesktopLayoutSettings {
   browserPanelVisible: boolean;
   /** Same as {@link browserPanelVisible}, for the Comments right panel. */
   commentsPanelVisible: boolean;
+  /** Same as {@link browserPanelVisible}, for the Assistant right panel. */
+  assistantPanelVisible: boolean;
   layerPanelVisible: boolean;
   showProjectInfo: boolean;
   stylePanelVisible: boolean;
@@ -182,6 +184,7 @@ let desktopSettingsAreTemporary = false;
 export const DEFAULT_DESKTOP_LAYOUT_SETTINGS: DesktopLayoutSettings = {
   browserPanelVisible: true,
   commentsPanelVisible: true,
+  assistantPanelVisible: true,
   layerPanelVisible: true,
   showProjectInfo: true,
   stylePanelVisible: true,
@@ -455,6 +458,10 @@ function normalizeDesktopLayoutSettings(layout: unknown): DesktopLayoutSettings 
       typeof candidate.commentsPanelVisible === "boolean"
         ? candidate.commentsPanelVisible
         : DEFAULT_DESKTOP_LAYOUT_SETTINGS.commentsPanelVisible,
+    assistantPanelVisible:
+      typeof candidate.assistantPanelVisible === "boolean"
+        ? candidate.assistantPanelVisible
+        : DEFAULT_DESKTOP_LAYOUT_SETTINGS.assistantPanelVisible,
     layerPanelVisible:
       typeof candidate.layerPanelVisible === "boolean"
         ? candidate.layerPanelVisible

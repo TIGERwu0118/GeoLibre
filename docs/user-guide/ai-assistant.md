@@ -4,8 +4,10 @@ The **AI Assistant** is a "chat with your data" panel that turns plain-English
 requests into GeoLibre's own operations — Spatial SQL, layer styling, map
 control, and more — and applies them **through the app**, the same way you would
 by hand. Open it from **Processing → AI Assistant** (top of the menu) or the
-command palette. It docks as a resizable panel at the bottom of the window (drag
-its top edge to resize, **✕** to close).
+command palette. It docks as a panel on the right side of the window, sharing
+the Style sidebar's icon rail with the Comments panel: click its rail icon to
+expand or collapse it, and **✕** to close it (reopen it from
+**Settings → Layout**).
 
 Because the assistant acts through the store rather than poking the map
 directly, almost everything it does is **undoable** with **Ctrl/Cmd + Z**, and

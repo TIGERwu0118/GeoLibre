@@ -1,4 +1,4 @@
-import { useAppStore } from "@geolibre/core";
+import { closeRightPanel } from "@geolibre/plugins";
 import type { MapController } from "@geolibre/map";
 import { Button, Select, Textarea, cn } from "@geolibre/ui";
 import {
@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type RefObject,
   useCallback,
   useEffect,
@@ -29,6 +28,7 @@ import { renderAssistantMarkdown } from "../../lib/assistant/markdown";
 import { isOllamaNetworkFailure, withOllamaOriginHint } from "../../lib/assistant/ollama";
 import { selectActiveAssistantProfile } from "../../lib/assistant/profiles";
 import { isSendKey } from "../../lib/assistant/send-key";
+import { ASSISTANT_PANEL_ID } from "../../hooks/useRegisterAssistantPanel";
 import { openSettingsSection } from "../layout/SettingsDialog";
 import {
   ASSISTANT_PROVIDER_IDS,
@@ -43,12 +43,6 @@ import {
   type AssistantProviderId,
 } from "../../lib/assistant/provider";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
-// Paired with MapCanvas so it suspends pointer interaction while dragging.
-import { PANEL_RESIZE_END_EVENT, PANEL_RESIZE_START_EVENT } from "../../lib/panel-resize";
-
-const DEFAULT_PANEL_HEIGHT = 360;
-const MIN_PANEL_HEIGHT = 160;
-const MAX_PANEL_HEIGHT = 640;
 const RUNTIME_ENV_EVENT = "geolibre:runtime-env-change";
 const PROFILE_STORAGE_KEY = "geolibre.assistant.profileId";
 
@@ -126,19 +120,18 @@ function describeTool(name: string, input: unknown): string {
 }
 
 /**
- * The natural-language assistant: a bottom-docked chat panel powered by a
- * GeoLibre-native Strands agent. The agent drives the app exclusively through
- * store actions, the SQL Workspace, and the symbology helpers, so every change
- * is reconciled by the normal one-way data flow and covered by undo/redo.
- * Rendered only while open.
+ * The natural-language assistant: a chat panel docked in the right sidebar's
+ * shared rail, powered by a GeoLibre-native Strands agent. The agent drives the
+ * app exclusively through store actions, the SQL Workspace, and the symbology
+ * helpers, so every change is reconciled by the normal one-way data flow and
+ * covered by undo/redo. Mounted from the panel's first open onward so the
+ * conversation survives collapsing the panel onto its rail.
  *
  * @param mapControllerRef - Live map controller, read lazily by camera tools.
  */
 export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
   const { t } = useTranslation();
-  const setAssistantOpen = useAppStore((s) => s.setAssistantOpen);
 
-  const sectionRef = useRef<HTMLElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Session-local prompt history. `null` means the user is editing a fresh
@@ -159,11 +152,6 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
   // Identifies the current send so a stopped run's cleanup can't reset the
   // running state of a newer send started right after Stop.
   const sendGenerationRef = useRef(0);
-  // Tears down an in-flight drag's window listeners if the panel unmounts
-  // mid-drag (e.g. the user closes it while dragging).
-  const resizeCleanupRef = useRef<(() => void) | null>(null);
-
-  const [height, setHeight] = useState(DEFAULT_PANEL_HEIGHT);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -288,9 +276,6 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
     },
     [session],
   );
-
-  // On unmount mid-drag, tear down the drag's window listeners.
-  useEffect(() => () => resizeCleanupRef.current?.(), []);
 
   // Track which provider keys are configured; rebuild the agent on change so a
   // newly-added key takes effect without reopening the panel. Credentials are
@@ -549,54 +534,6 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
     });
   };
 
-  // Drag the top edge to resize the panel height. Mirrors the Python Console:
-  // writes are throttled to one DOM mutation per frame and committed to state on
-  // mouseup, and the panel-resize events let MapCanvas pause pointer handling.
-  const startResize = (event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const startY = event.clientY;
-    const startHeight = height;
-    let nextHeight = startHeight;
-    let frame: number | null = null;
-    const prevCursor = document.body.style.cursor;
-    const prevSelect = document.body.style.userSelect;
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    window.dispatchEvent(new Event(PANEL_RESIZE_START_EVENT));
-
-    const onMove = (moveEvent: MouseEvent) => {
-      const available = Math.max(MIN_PANEL_HEIGHT, window.innerHeight - 180);
-      const maxHeight = Math.min(MAX_PANEL_HEIGHT, available);
-      nextHeight = Math.min(
-        maxHeight,
-        Math.max(MIN_PANEL_HEIGHT, startHeight + startY - moveEvent.clientY),
-      );
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        if (sectionRef.current) {
-          sectionRef.current.style.height = `${nextHeight}px`;
-        }
-      });
-    };
-
-    const finish = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", finish);
-      resizeCleanupRef.current = null;
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      setHeight(nextHeight);
-      window.dispatchEvent(new Event(PANEL_RESIZE_END_EVENT));
-      document.body.style.cursor = prevCursor;
-      document.body.style.userSelect = prevSelect;
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", finish);
-    resizeCleanupRef.current = finish;
-  };
-
   // Show the onboarding setup card only when no provider is configured, no run
   // is in flight, and there is no conversation to preserve. Gating on `running`
   // keeps the Stop button reachable if a key is removed mid-run; gating on
@@ -614,33 +551,26 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
 
   return (
     <section
-      ref={sectionRef}
       aria-label={t("assistant.title")}
-      className="relative flex shrink-0 flex-col border-t bg-card"
-      style={{ height }}
+      className="relative flex h-full min-h-0 flex-col bg-card"
     >
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={t("assistant.resize")}
-        className="absolute -top-1 left-0 right-0 z-20 h-2 cursor-row-resize select-none border-t border-transparent hover:border-primary"
-        onMouseDown={startResize}
-      />
-      <div className="flex items-center gap-2 border-b px-3 py-1.5">
-        <Sparkles className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-semibold">{t("assistant.title")}</span>
+      {/* Everything in the header must be able to shrink or truncate: this
+          panel now lives in a narrow side column, not the old full-width dock. */}
+      <div className="flex min-w-0 items-center gap-2 border-b px-3 py-1.5">
+        <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-sm font-semibold">{t("assistant.title")}</span>
         {running ? (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {t("assistant.thinking")}
+          <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+            <span className="truncate">{t("assistant.thinking")}</span>
           </span>
         ) : null}
-        <div className="ms-auto flex items-center gap-1">
+        <div className="ms-auto flex min-w-0 items-center gap-1">
           {hasKey && aiProfiles.length > 0 ? (
             <>
               <Select
                 aria-label={t("assistant.profile")}
-                className="h-8 w-auto max-w-[160px] text-xs"
+                className="h-8 w-auto min-w-0 max-w-[160px] text-xs"
                 value={activeProfile?.id ?? ""}
                 disabled={running}
                 onChange={(event) => onProfileChange(event.target.value)}
@@ -657,7 +587,7 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
               {activeProfile && PROVIDER_MODELS[activeProfile.provider].length > 0 ? (
                 <Select
                   aria-label={t("assistant.model")}
-                  className="h-8 w-auto max-w-[180px] text-xs"
+                  className="h-8 w-auto min-w-0 max-w-[180px] text-xs"
                   value={activeProfile.modelId || defaultModelFor(activeProfile.provider)}
                   disabled={running}
                   onChange={(event) => onModelChange(event.target.value)}
@@ -680,7 +610,7 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0"
             title={t("assistant.clear")}
             onClick={clearConversation}
           >
@@ -689,9 +619,9 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0"
             title={t("assistant.close")}
-            onClick={() => setAssistantOpen(false)}
+            onClick={() => closeRightPanel(ASSISTANT_PANEL_ID)}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -720,11 +650,16 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
               </p>
               <ul aria-label={t("assistant.setupProviders")} className="space-y-1">
                 {SETUP_PROVIDERS.map(({ id, envs }) => (
-                  <li key={id} className="flex items-start justify-between gap-3 text-xs">
+                  <li
+                    key={id}
+                    // The chips wrap below the label in a narrow side column
+                    // instead of forcing the row (and the panel) wider.
+                    className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 text-xs"
+                  >
                     <span className="shrink-0 text-foreground">{PROVIDER_LABELS[id]}</span>
                     {/* One chip per variable so a multi-credential provider
                         never reads as a single oddly-named env var. */}
-                    <span className="flex flex-wrap justify-end gap-x-1 gap-y-0.5 text-end font-mono text-[11px] text-muted-foreground">
+                    <span className="ms-auto flex min-w-0 flex-wrap justify-end gap-x-1 gap-y-0.5 text-end font-mono text-[11px] text-muted-foreground">
                       {envs.map((name, index) => (
                         <span key={name} className="whitespace-nowrap">
                           {index > 0 ? (
@@ -764,13 +699,16 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
               return (
                 <p key={turn.id} className="flex items-start gap-1.5 text-xs text-destructive">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>{turn.text}</span>
+                  <span className="break-words">{turn.text}</span>
                 </p>
               );
             }
             if (turn.role === "user") {
               return (
-                <div key={turn.id} className="whitespace-pre-wrap font-medium text-foreground">
+                <div
+                  key={turn.id}
+                  className="whitespace-pre-wrap break-words font-medium text-foreground"
+                >
                   {`❯ ${turn.text}`}
                 </div>
               );
@@ -780,7 +718,7 @@ export function AssistantPanel({ mapControllerRef }: AssistantPanelProps) {
               <div
                 key={turn.id}
                 className={cn(
-                  "text-foreground",
+                  "break-words text-foreground",
                   "[&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0",
                   "[&_ul]:my-1 [&_ul]:list-disc [&_ul]:ps-5",
                   "[&_ol]:my-1 [&_ol]:list-decimal [&_ol]:ps-5",
