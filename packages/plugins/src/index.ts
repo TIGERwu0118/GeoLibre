@@ -598,6 +598,24 @@ export {
   MINE_AREA_BOUNDS,
 } from "./plugins/maplibre-mining";
 export {
+  maplibreCasesPlugin,
+  CASES_PLUGIN_ID,
+  DEFAULT_PRODUCTS_MANIFEST_URL,
+  mergeCasesSettings,
+} from "./plugins/maplibre-cases";
+export {
+  CASE_TASKS,
+  CASE_STYLE_PRESETS,
+  parseProducts,
+  presetFor,
+  productBbox,
+  productLayerName,
+  metricsSummary,
+  type CaseProduct,
+  type CaseStylePreset,
+  type CaseTaskId,
+} from "./plugins/case-kit";
+export {
   maplibreInsarPlugin,
   INSAR_PLUGIN_ID,
   setInsarLabels,

@@ -69,6 +69,7 @@ import {
   maplibreSunPlugin,
   maplibreInsarPlugin,
   maplibreMiningPlugin,
+  maplibreCasesPlugin,
   maplibreRouteAnimationPlugin,
   flightSimulatorPlugin,
   maplibreSwipePlugin,
@@ -241,6 +242,7 @@ manager.registerAll([
   flightSimulatorPlugin,
   maplibreInsarPlugin,
   maplibreMiningPlugin,
+  maplibreCasesPlugin,
   // Last visible entry of the Plugins menu; the ids below are skipped by
   // PluginsMenu and surface elsewhere.
   maplibreSamGeoPlugin,
