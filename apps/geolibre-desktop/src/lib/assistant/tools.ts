@@ -136,6 +136,15 @@ function isReadOnlySql(sql: string): boolean {
  * loopback/private/link-local address (guards against AI-directed SSRF to the
  * local sidecar or internal services via prompt injection).
  */
+/**
+ * Loopback override for the mining deployment: the sidecars the assistant is
+ * meant to read (static GeoJSON on :8767, insar-viz on :8768, JL1 mine tiles
+ * on :9194) all live on 127.0.0.1 behind ssh local-forwards. Loopback is not
+ * an SSRF boundary in a local desktop GIS — the app itself loads these URLs —
+ * so only loopback is exempted; private LAN ranges stay refused.
+ */
+const ALLOW_LOOPBACK_URLS = true;
+
 function assertPublicHttpUrl(raw: string): void {
   let url: URL;
   try {
@@ -149,6 +158,9 @@ function assertPublicHttpUrl(raw: string): void {
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   // Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) before the IPv4 checks.
   const v4 = host.startsWith("::ffff:") ? host.slice(7) : host;
+  const isLoopback =
+    ALLOW_LOOPBACK_URLS &&
+    (host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127\./.test(v4));
   const isPrivate =
     host === "localhost" ||
     host.endsWith(".localhost") ||
@@ -163,8 +175,8 @@ function assertPublicHttpUrl(raw: string): void {
     /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(v4) || // 100.64/10 CGNAT
     /^(fc|fd)[0-9a-f]{2}:/.test(host) || // unique-local IPv6
     /^fe80:/.test(host); // link-local IPv6
-  if (isPrivate) {
-    throw new Error(`Refusing to fetch a private/loopback address: ${host}`);
+  if (isPrivate && !isLoopback) {
+    throw new Error(`Refusing to fetch a private address: ${host}`);
   }
 }
 

@@ -590,6 +590,14 @@ export {
   type SamGeoLabels,
 } from "./plugins/maplibre-samgeo";
 export {
+  maplibreMiningPlugin,
+  MINING_PLUGIN_ID,
+  setMiningLabels,
+  type MiningLabels,
+  jl1TileUrlTemplate,
+  MINE_AREA_BOUNDS,
+} from "./plugins/maplibre-mining";
+export {
   maplibreInsarPlugin,
   INSAR_PLUGIN_ID,
   setInsarLabels,
