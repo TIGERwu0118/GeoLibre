@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   DEFAULT_INSAR_API_URL,
+  INSAR_DOWNLOAD_ARM_SECONDS,
+  INSAR_DOWNLOAD_CONFIRM_PHRASE,
   INSAR_PLUGIN_ID,
   insarBoundsFromGeo,
   insarManifestUrl,
@@ -86,4 +88,11 @@ test("insarManifestUrl joins base and product with escaping", () => {
 
 test("default endpoint is the insar-viz tunnel local forward", () => {
   assert.equal(DEFAULT_INSAR_API_URL, "http://127.0.0.1:8768");
+});
+
+test("download-start contract: fixed phrase mirrors the sidecar, arming is short-lived", () => {
+  // Must equal DOWNLOAD_CONFIRM_PHRASE in the sidecar's http_api.py — the
+  // server refuses POST /download/start without the exact phrase.
+  assert.equal(INSAR_DOWNLOAD_CONFIRM_PHRASE, "启动 SLC 下载");
+  assert.ok(INSAR_DOWNLOAD_ARM_SECONDS >= 3 && INSAR_DOWNLOAD_ARM_SECONDS <= 10);
 });

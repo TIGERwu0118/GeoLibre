@@ -93,6 +93,18 @@ export interface InsarLabels {
   pickActive: string;
   pickHeading: (product: string) => string;
   pickFailed: (error: string) => string;
+  downloadHeading: string;
+  downloadCheck: string;
+  downloadIdle: string;
+  downloadRunning: string;
+  downloadSlc: (count: number | null | undefined) => string;
+  downloadOrbits: (count: number | null | undefined) => string;
+  downloadResumable: string;
+  downloadStart: string;
+  downloadStartArmed: (seconds: number) => string;
+  downloadStarting: string;
+  downloadStarted: (session: string) => string;
+  downloadStartFailed: (reason: string) => string;
 }
 
 const DEFAULT_LABELS: InsarLabels = {
@@ -129,6 +141,18 @@ const DEFAULT_LABELS: InsarLabels = {
   pickActive: "📍 点选中（点地图取点 / 再点关闭）",
   pickHeading: (product) => `点位时序 · ${product}`,
   pickFailed: (error) => `取点失败：${error}`,
+  downloadHeading: "下载编排（SLC → NAS）",
+  downloadCheck: "查看下载状态",
+  downloadIdle: "未运行",
+  downloadRunning: "进行中",
+  downloadSlc: (count) => `SLC 归档：${count ?? "?"} 个 zip`,
+  downloadOrbits: (count) => `精密轨道：${count ?? "?"} 个文件`,
+  downloadResumable: "可续传（manifest 标记 + NAS 已有跳过）",
+  downloadStart: "启动下载…（需人工确认）",
+  downloadStartArmed: (seconds) => `再次点击确认启动（${seconds}s 内生效）`,
+  downloadStarting: "启动中…",
+  downloadStarted: (session) => `已启动 tmux 会话 ${session}（attach 查看；可续传，中断重跑即续）`,
+  downloadStartFailed: (reason) => `启动失败：${reason}`,
 };
 
 let labels: InsarLabels = DEFAULT_LABELS;
@@ -150,6 +174,30 @@ export function insarRasterUrl(
 /** Absolute URL of a product's kerchunk manifest (already /file-remapped). */
 export function insarManifestUrl(base: string, productId: string): string {
   return `${base.replace(/\/+$/, "")}/manifest/${encodeURIComponent(productId)}`;
+}
+
+/**
+ * Fixed phrase the panel sends on the second (confirming) click of the
+ * download-start flow. Must match `DOWNLOAD_CONFIRM_PHRASE` in the sidecar's
+ * http_api.py — the server refuses to start without it. Deliberately never
+ * surfaced through an assistant tool: starting the multi-hour ASF download
+ * is a human action.
+ */
+export const INSAR_DOWNLOAD_CONFIRM_PHRASE = "启动 SLC 下载";
+
+/** Seconds the two-click in-person confirmation stays armed. */
+export const INSAR_DOWNLOAD_ARM_SECONDS = 5;
+
+/** GET /download/status payload (the M6 plan facts). */
+export interface InsarDownloadStatus {
+  script_exists?: boolean;
+  tmux_session?: string;
+  tmux_session_running?: boolean;
+  slc_zip_count?: number | null;
+  orbit_file_count?: number | null;
+  stages?: string[];
+  resumable?: boolean;
+  note?: string;
 }
 
 /** WGS84 bounds [w, s, e, n] of a product grid, or null when geo is missing. */
@@ -239,7 +287,10 @@ function buildPanel(container: HTMLElement): () => void {
   // 时序浏览区：加载时序直读图层后出现（滑块驱动 setZarrLayerSelector）。
   const tsSection = document.createElement("div");
   tsSection.style.cssText = "display:none;flex-direction:column;gap:6px;padding:8px;border:1px solid rgba(84,140,240,0.45);border-radius:6px;margin-top:6px;";
-  root.append(intro, apiRow, status, listHeading, list, tsSection);
+  // 下载编排节（M6）：状态预览 + 两次点击在场确认，是 start 的唯一 UI 入口。
+  const dlSection = document.createElement("div");
+  dlSection.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(128,128,128,0.35);";
+  root.append(intro, apiRow, status, listHeading, list, tsSection, dlSection);
   container.append(root);
 
   let tsState: { layerId: string; dates: string[]; index: number; productId: string } | null = null;
@@ -638,11 +689,129 @@ function buildPanel(container: HTMLElement): () => void {
     return block;
   };
 
+  // ---- 下载编排（M6）----------------------------------------------------
+  const dlHead = document.createElement("h4");
+  dlHead.style.cssText = "margin:0;";
+  dlHead.textContent = labels.downloadHeading;
+
+  const dlCheck = document.createElement("button");
+  dlCheck.type = "button";
+  dlCheck.textContent = labels.downloadCheck;
+  dlCheck.style.cssText = "align-self:flex-start;padding:3px 10px;";
+
+  const dlInfo = document.createElement("div");
+  dlInfo.style.cssText = "display:flex;flex-direction:column;gap:4px;font-size:12px;opacity:0.85;";
+  dlSection.append(dlHead, dlCheck, dlInfo);
+
+  let armDeadline = 0;
+  let armTimer: ReturnType<typeof setInterval> | null = null;
+
+  const disarmStart = (button: HTMLButtonElement): void => {
+    armDeadline = 0;
+    if (armTimer) clearInterval(armTimer);
+    armTimer = null;
+    button.textContent = labels.downloadStart;
+    button.style.color = "";
+  };
+
+  const confirmStart = async (button: HTMLButtonElement, session: string): Promise<void> => {
+    button.disabled = true;
+    button.textContent = labels.downloadStarting;
+    const note = document.createElement("div");
+    try {
+      const response = await fetch(`${state.apiBase.replace(/\/+$/, "")}/download/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true, phrase: INSAR_DOWNLOAD_CONFIRM_PHRASE }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { started?: boolean; tmux_session?: string; watch?: string }
+        | { detail?: { reason?: string } }
+        | null;
+      const started = response.ok && !!(data as { started?: boolean } | null)?.started;
+      if (!started) {
+        const reason =
+          (data as { detail?: { reason?: string } } | null)?.detail?.reason ?? `HTTP ${response.status}`;
+        throw new Error(reason);
+      }
+      note.textContent = labels.downloadStarted((data as { tmux_session?: string }).tmux_session ?? session);
+    } catch (error) {
+      note.textContent = labels.downloadStartFailed(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = labels.downloadStart;
+      dlInfo.append(note);
+    }
+  };
+
+  const renderDownloadFacts = (facts: InsarDownloadStatus): void => {
+    dlInfo.replaceChildren();
+    const session = facts.tmux_session ?? "asf-download";
+    const stateLine = document.createElement("div");
+    const running = Boolean(facts.tmux_session_running);
+    stateLine.textContent = `${running ? labels.downloadRunning : labels.downloadIdle}${facts.script_exists === false ? " · 脚本缺失" : ""}`;
+    stateLine.style.color = running ? "#3fa46a" : "";
+    const slc = document.createElement("div");
+    slc.textContent = labels.downloadSlc(facts.slc_zip_count);
+    const orbit = document.createElement("div");
+    orbit.textContent = labels.downloadOrbits(facts.orbit_file_count);
+    dlInfo.append(stateLine, slc, orbit, ...(facts.resumable ? [Object.assign(document.createElement("div"), { textContent: labels.downloadResumable })] : []));
+    if (running || facts.script_exists === false) return;
+    // 未运行才给启动入口：第一次点击进入 5s 待确认态，期间第二次点击才真正 POST。
+    const start = document.createElement("button");
+    start.type = "button";
+    start.textContent = labels.downloadStart;
+    start.style.cssText = "align-self:flex-start;padding:3px 10px;";
+    start.addEventListener("click", () => {
+      if (Date.now() < armDeadline) {
+        disarmStart(start);
+        void confirmStart(start, session);
+        return;
+      }
+      armDeadline = Date.now() + INSAR_DOWNLOAD_ARM_SECONDS * 1000;
+      start.style.color = "#d08770";
+      if (armTimer) clearInterval(armTimer);
+      armTimer = setInterval(() => {
+        const left = Math.ceil((armDeadline - Date.now()) / 1000);
+        if (left <= 0) disarmStart(start);
+        else start.textContent = labels.downloadStartArmed(left);
+      }, 250);
+      start.textContent = labels.downloadStartArmed(INSAR_DOWNLOAD_ARM_SECONDS);
+    });
+    dlInfo.append(start);
+  };
+
+  const checkDownload = async (): Promise<void> => {
+    dlCheck.disabled = true;
+    try {
+      const response = await fetch(`${state.apiBase.replace(/\/+$/, "")}/download/status`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      renderDownloadFacts((await response.json()) as InsarDownloadStatus);
+    } catch (error) {
+      dlInfo.replaceChildren(
+        Object.assign(document.createElement("div"), {
+          textContent: labels.unavailable(error instanceof Error ? error.message : String(error)),
+        }),
+      );
+    } finally {
+      dlCheck.disabled = false;
+    }
+  };
+  dlCheck.addEventListener("click", () => void checkDownload());
+
   connect.addEventListener("click", () => void refreshCatalog());
 
   return () => {
     if (tsSelectorTimer) clearTimeout(tsSelectorTimer);
     tsSelectorTimer = null;
+    if (armTimer) clearInterval(armTimer);
+    armTimer = null;
+    armDeadline = 0;
     if (pickHandler) {
       togglePickMode(); // detach the map click handler
       pickHandler = null;
