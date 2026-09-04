@@ -18,6 +18,8 @@ import { cleanStatement, maskSqlLiterals, previewLayerTables, runSqlQuery } from
 import { createXyzTileUrlTemplate } from "../xyz-url";
 import { findNamedTileBasemap, NAMED_TILE_BASEMAPS } from "./basemaps";
 import { buildSymbologyStyle } from "./symbology";
+import { createInsarTools } from "./insar";
+import { createSam3Tools } from "./sam3";
 import { webSearch } from "./web-search";
 
 /** Dependencies the assistant tools need beyond the global store. */
@@ -1076,5 +1078,7 @@ export function createAssistantTools(deps: AssistantToolDeps): InvokableTool<unk
     applySymbology,
     runMaplibreJs,
     runPython,
+    ...createSam3Tools(deps),
+    ...createInsarTools(),
   ] as InvokableTool<unknown, unknown>[];
 }

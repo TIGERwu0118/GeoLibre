@@ -590,6 +590,15 @@ export {
   type SamGeoLabels,
 } from "./plugins/maplibre-samgeo";
 export {
+  maplibreInsarPlugin,
+  INSAR_PLUGIN_ID,
+  setInsarLabels,
+  type InsarLabels,
+  insarRasterUrl,
+  insarBoundsFromGeo,
+  type InsarProductRow,
+} from "./plugins/maplibre-insar";
+export {
   maplibreMapillaryPlugin,
   MAPILLARY_PLUGIN_ID,
   setMapillaryLabels,
