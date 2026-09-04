@@ -29,6 +29,8 @@ export const DEFAULT_MINE_GEOJSON_URL = "http://127.0.0.1:8767/geolibre-mine/min
 export const DEFAULT_BUFFER_GEOJSON_URL = "http://127.0.0.1:8767/geolibre-mine/buf500.geojson";
 /** 50 矿批量 COG 的清单（batch_build_cogs.py 产出，8767 出口）。 */
 export const DEFAULT_COG_MANIFEST_URL = "http://127.0.0.1:8767/geolibre-cogs/manifest.json";
+/** InSAR 形变 COG 的 8767 导出目录（insar_velocity_<年>_p113full_cog.tif 等）。 */
+export const DEFAULT_INSAR_URL_BASE = "http://127.0.0.1:8767/geolibre-insar";
 /**
  * 默认影像源：服务器端 jilin1 矿区瓦片服务（tmux `mineserver`，127.0.0.1:9194，
  * Mac 经 SSH 隧道访问）。`/all/{z}/{x}/{y}.png` 是 50 个矿区金字塔的合并视图
@@ -79,6 +81,41 @@ export const MINING_COG_LAYER_OPTIONS = {
   rescaleMin: 0,
   rescaleMax: 255,
 } as const;
+
+/** InSAR LOS velocity (m/yr, mintpy, Sentinel-1 p113 full frame). Diverging
+ * RdYlGn over a ±10 cm/yr window: subsidence reads red, uplift green; the
+ * Style panel's rescale inputs can re-window per scene. */
+export const INSAR_VELOCITY_OPTIONS = {
+  bands: "1",
+  colormap: "rdylgn",
+  rescaleMin: -0.1,
+  rescaleMax: 0.1,
+  opacity: 0.9,
+} as const;
+
+/** Temporal coherence (0–1): the mintpy mask threshold is 0.4, so window the
+ * viridis ramp from there — anything below reads as "no estimate". */
+export const INSAR_COHERENCE_OPTIONS = {
+  bands: "1",
+  colormap: "viridis",
+  rescaleMin: 0.4,
+  rescaleMax: 1,
+  opacity: 0.9,
+} as const;
+
+/** Years with a processed p113-full velocity product on the export share. */
+export const INSAR_VELOCITY_YEARS: readonly MiningTileYear[] = MINING_TILE_YEARS;
+/** Temporal-coherence export exists only for 2024 so far. */
+export const INSAR_COHERENCE_YEARS: readonly MiningTileYear[] = ["2024"];
+
+export const insarVelocityLayerName = (year: MiningTileYear): string =>
+  `InSAR形变速率${year}（LOS）`;
+export const insarCoherenceLayerName = (year: MiningTileYear): string =>
+  `InSAR时间相干性${year}`;
+export const insarVelocityUrl = (base: string, year: MiningTileYear): string =>
+  `${base.replace(/\/$/, "")}/insar_velocity_${year}_p113full_cog.tif`;
+export const insarCoherenceUrl = (base: string, year: MiningTileYear): string =>
+  `${base.replace(/\/$/, "")}/insar_tempcoh_${year}_p113full_cog.tif`;
 
 export interface MiningCogLayerRef {
   /** Display name: the mine's Chinese name, falling back to its ET_ID. */
@@ -136,6 +173,8 @@ export interface MiningPanelSettings {
   cogUrl: string;
   /** 50 矿批量 COG 清单地址（加载全部矿区 COG 按钮的数据源）。 */
   cogManifestUrl: string;
+  /** InSAR 形变 COG 导出目录（8767 下的 geolibre-insar）。 */
+  insarUrlBase: string;
   year: MiningTileYear;
   tk: string;
   mkByYear: Record<MiningTileYear, string>;
@@ -149,6 +188,7 @@ export function defaultMiningSettings(): MiningPanelSettings {
     imageryMode: "local",
     cogUrl: "",
     cogManifestUrl: DEFAULT_COG_MANIFEST_URL,
+    insarUrlBase: DEFAULT_INSAR_URL_BASE,
     year: "2024",
     tk: "",
     mkByYear: { "2022": "", "2023": "", "2024": "" },
@@ -172,6 +212,9 @@ export function mergeMiningSettings(stored: unknown): MiningPanelSettings {
   if (typeof raw.cogUrl === "string") base.cogUrl = raw.cogUrl.trim();
   if (typeof raw.cogManifestUrl === "string" && raw.cogManifestUrl.trim()) {
     base.cogManifestUrl = raw.cogManifestUrl.trim();
+  }
+  if (typeof raw.insarUrlBase === "string" && raw.insarUrlBase.trim()) {
+    base.insarUrlBase = raw.insarUrlBase.trim();
   }
   if (raw.imageryMode === "local" || raw.imageryMode === "api") base.imageryMode = raw.imageryMode;
   if (isMiningTileYear(raw.year)) base.year = raw.year;
@@ -241,6 +284,10 @@ export interface MiningLabels {
   cogUrlLabel: string;
   loadCog: string;
   manifestUrlLabel: string;
+  insarUrlBaseLabel: string;
+  insarYearLabel: string;
+  loadInsar: string;
+  insarCoherenceNote: (years: string) => string;
   loadAllCogs: string;
   cogManifestFetching: string;
   cogManifestEmpty: string;
@@ -282,6 +329,10 @@ const DEFAULT_LABELS: MiningLabels = {
   cogUrlLabel: "GeoTIFF（COG）地址",
   loadCog: "加载 GeoTIFF 图层",
   manifestUrlLabel: "50 矿 COG 清单地址（manifest.json）",
+  insarUrlBaseLabel: "InSAR 形变 COG 目录",
+  insarYearLabel: "InSAR 年份",
+  loadInsar: "加载 InSAR 形变图层",
+  insarCoherenceNote: (years) => `时间相干性仅 ${years} 有导出`,
   loadAllCogs: "加载全部矿区 COG",
   cogManifestFetching: "正在读取 COG 清单…",
   cogManifestEmpty: "COG 清单为空或格式不对",
@@ -448,6 +499,7 @@ function buildPanel(container: HTMLElement): () => void {
   addField(labels.imageryUrlLabel, settings.imageryUrl, (v) => (settings.imageryUrl = v));
   addField(labels.cogUrlLabel, settings.cogUrl, (v) => (settings.cogUrl = v));
   addField(labels.manifestUrlLabel, settings.cogManifestUrl, (v) => (settings.cogManifestUrl = v));
+  addField(labels.insarUrlBaseLabel, settings.insarUrlBase, (v) => (settings.insarUrlBase = v));
   const loadCog = document.createElement("button");
   loadCog.type = "button";
   loadCog.textContent = labels.loadCog;
@@ -457,6 +509,37 @@ function buildPanel(container: HTMLElement): () => void {
   loadAllCogs.textContent = labels.loadAllCogs;
   loadAllCogs.style.cssText = BUTTON_STYLE;
   credsBody.append(loadCog, loadAllCogs);
+
+  // InSAR section: year + load button. Velocity is a diverging single-band
+  // float COG; coherence (2024 only) helps read which estimates to trust.
+  const insarRow = document.createElement("div");
+  insarRow.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
+  const insarYearLabel = document.createElement("span");
+  insarYearLabel.style.cssText = "opacity:0.85;";
+  insarYearLabel.textContent = labels.insarYearLabel;
+  const insarYearSelect = document.createElement("select");
+  insarYearSelect.setAttribute("aria-label", labels.insarYearLabel);
+  insarYearSelect.style.cssText = "padding:4px 6px;border:1px solid rgba(128,128,128,0.5);border-radius:4px;background:transparent;color:inherit;";
+  let insarYear: MiningTileYear = "2024";
+  for (const year of INSAR_VELOCITY_YEARS) {
+    const option = document.createElement("option");
+    option.value = year;
+    option.textContent = year;
+    option.selected = year === insarYear;
+    insarYearSelect.append(option);
+  }
+  insarYearSelect.addEventListener("change", () => {
+    if (isMiningTileYear(insarYearSelect.value)) insarYear = insarYearSelect.value;
+  });
+  const loadInsar = document.createElement("button");
+  loadInsar.type = "button";
+  loadInsar.textContent = labels.loadInsar;
+  loadInsar.style.cssText = BUTTON_STYLE;
+  const insarNote = document.createElement("span");
+  insarNote.style.cssText = "opacity:0.7;font-size:12px;";
+  insarNote.textContent = labels.insarCoherenceNote(INSAR_COHERENCE_YEARS.join("/"));
+  insarRow.append(insarYearLabel, insarYearSelect, loadInsar, insarNote);
+  credsBody.append(insarRow);
 
   yearSelect.addEventListener("change", () => {
     const value = yearSelect.value;
@@ -649,6 +732,50 @@ function buildPanel(container: HTMLElement): () => void {
         );
       })
       .finally(finish);
+  });
+
+  loadInsar.addEventListener("click", () => {
+    if (typeof appRef?.addCogLayer !== "function") {
+      status.textContent = labels.hostMissingCogApi;
+      return;
+    }
+    loadInsar.disabled = true;
+    const addOne = async (name: string, url: string, options: Record<string, unknown>): Promise<void> => {
+      if (layerByName(name)) return;
+      const id = await appRef!.addCogLayer!(name, url, options);
+      trackedLayerIds.add(id);
+    };
+    const velocityUrl = insarVelocityUrl(settings.insarUrlBase, insarYear);
+    const tasks: Array<[string, string, Record<string, unknown>]> = [
+      [
+        insarVelocityLayerName(insarYear),
+        velocityUrl,
+        { ...INSAR_VELOCITY_OPTIONS },
+      ],
+    ];
+    if (INSAR_COHERENCE_YEARS.includes(insarYear)) {
+      tasks.push([
+        insarCoherenceLayerName(insarYear),
+        insarCoherenceUrl(settings.insarUrlBase, insarYear),
+        { ...INSAR_COHERENCE_OPTIONS },
+      ]);
+    }
+    void (async () => {
+      try {
+        for (const [name, url, options] of tasks) {
+          status.textContent = `${labels.loadInsar}… ${name}`;
+          await addOne(name, url, options);
+        }
+        status.textContent = labels.added(tasks.map(([name]) => name).join(" + "));
+      } catch (error: unknown) {
+        status.textContent = labels.failed(
+          labels.loadInsar,
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        loadInsar.disabled = false;
+      }
+    })();
   });
 
   zoomArea.addEventListener("click", () => {

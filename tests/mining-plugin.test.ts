@@ -6,8 +6,15 @@ import {
   cogLayersFromManifest,
   DEFAULT_BUFFER_GEOJSON_URL,
   DEFAULT_COG_MANIFEST_URL,
+  DEFAULT_INSAR_URL_BASE,
   DEFAULT_LOCAL_IMAGERY_URL,
   DEFAULT_MINE_GEOJSON_URL,
+  insarCoherenceLayerName,
+  insarVelocityLayerName,
+  insarVelocityUrl,
+  INSAR_COHERENCE_OPTIONS,
+  INSAR_COHERENCE_YEARS,
+  INSAR_VELOCITY_OPTIONS,
   jl1TileUrlTemplate,
   maplibreMiningPlugin,
   mergeMiningSettings,
@@ -114,6 +121,33 @@ test("cogLayersFromManifest resolves batch-build entries and skips junk", () => 
   assert.deepEqual(cogLayersFromManifest({ x: { url: "" } }, manifestUrl), []);
   assert.equal(typeof DEFAULT_COG_MANIFEST_URL, "string");
   assert.ok(mergeMiningSettings({}).cogManifestUrl.startsWith("http"));
+});
+
+test("InSAR layers use a diverging window for velocity and masked viridis for coherence", () => {
+  // LOS velocity is m/yr (mintpy UNIT=m); ±10 cm/yr frames subsidence red /
+  // uplift green without saturating the quiet background (σ≈4 cm/yr).
+  assert.equal(INSAR_VELOCITY_OPTIONS.colormap, "rdylgn");
+  assert.equal(INSAR_VELOCITY_OPTIONS.bands, "1");
+  assert.ok(INSAR_VELOCITY_OPTIONS.rescaleMin < 0 && INSAR_VELOCITY_OPTIONS.rescaleMax > 0);
+  assert.equal(INSAR_VELOCITY_OPTIONS.rescaleMin, -INSAR_VELOCITY_OPTIONS.rescaleMax);
+  // Coherence: mintpy's 0.4 mask threshold is the ramp floor.
+  assert.equal(INSAR_COHERENCE_OPTIONS.colormap, "viridis");
+  assert.equal(INSAR_COHERENCE_OPTIONS.rescaleMin, 0.4);
+  assert.ok(INSAR_COHERENCE_YEARS.includes("2024"));
+});
+
+test("InSAR layer names and URLs are per-year and unique", () => {
+  assert.equal(insarVelocityLayerName("2024"), "InSAR形变速率2024（LOS）");
+  assert.notEqual(insarVelocityLayerName("2022"), insarVelocityLayerName("2023"));
+  assert.equal(insarCoherenceLayerName("2024"), "InSAR时间相干性2024");
+  assert.equal(
+    insarVelocityUrl("http://127.0.0.1:8767/geolibre-insar/", "2024"),
+    "http://127.0.0.1:8767/geolibre-insar/insar_velocity_2024_p113full_cog.tif",
+  );
+  assert.equal(
+    insarVelocityUrl(DEFAULT_INSAR_URL_BASE, "2022"),
+    "http://127.0.0.1:8767/geolibre-insar/insar_velocity_2022_p113full_cog.tif",
+  );
 });
 
 test("plugin registers the right panel without touching the DOM until render", () => {
