@@ -26,7 +26,7 @@ test("cases plugin registers under its own id with the products manifest URL", (
   assert.equal(DEFAULT_PRODUCTS_MANIFEST_URL, "http://127.0.0.1:8767/geolibre-products/products.json");
   assert.deepEqual(
     CASE_TASKS.map((task) => task.id),
-    ["violation", "hazard", "eco"],
+    ["base", "violation", "hazard", "eco"],
   );
 });
 

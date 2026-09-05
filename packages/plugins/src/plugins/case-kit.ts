@@ -8,8 +8,8 @@
  * 由 8767 静态服务出口；条目必带 source/method 溯源字段。
  */
 
-/** 三个案例验证任务（任务书 2.3）；base 是数据底座，归矿山总览面板管。 */
-export type CaseTaskId = "violation" | "hazard" | "eco";
+/** 三个案例验证任务（任务书 2.3）；base 是数据底座（矿权/影像/InSAR），按切片级点选加载。 */
+export type CaseTaskId = "base" | "violation" | "hazard" | "eco";
 
 export interface CaseTaskDescriptor {
   id: CaseTaskId;
@@ -18,6 +18,11 @@ export interface CaseTaskDescriptor {
 }
 
 export const CASE_TASKS: readonly CaseTaskDescriptor[] = [
+  {
+    id: "base",
+    title: "数据底座",
+    intro: "矿权红线、外扩 500m、矿区 COG 影像与 InSAR 底图产品——点击条目逐个加载（逐条点选，避免一次拉全部 COG）。",
+  },
   {
     id: "violation",
     title: "矿山采场违法监测",
@@ -157,6 +162,14 @@ export const CASE_STYLE_PRESETS: Record<string, CaseStylePreset> = {
   risk_level: {
     kind: "cog",
     options: { bands: "1", colormap: "spectral", rescaleMin: 0, rescaleMax: 2, opacity: 0.75 },
+  },
+  mine_boundary_red: {
+    kind: "geojson",
+    style: { strokeColor: "#e60000", strokeWidth: 2, fillColor: "#e60000", fillOpacity: 0.06 },
+  },
+  mine_boundary_blue: {
+    kind: "geojson",
+    style: { strokeColor: "#2563eb", strokeWidth: 2, fillColor: "#2563eb", fillOpacity: 0.04 },
   },
   eco_index: {
     kind: "cog",
