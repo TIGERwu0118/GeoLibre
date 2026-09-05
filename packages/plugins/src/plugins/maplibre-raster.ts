@@ -664,6 +664,26 @@ export function restoreRasterLayers(app: GeoLibreAppAPI): void {
       const restoredGroups = new Map(
         useAppStore.getState().layerGroups.map((group) => [group.id, group] as const),
       );
+      // URL-backed rasters render through the GPU engine: the WASM tiler is
+      // aimed at local files and can leave a remote layer registered without
+      // producing pixels. A fresh control (deep-link project load) defaults to
+      // cog-tiler-wasm, so switch BEFORE replaying any layer — mid-loop engine
+      // swaps leave already-added rasters in a mixed state that renders as a
+      // frame-filling stale texture. Local-file restores keep the WASM
+      // engine's asset-protocol read path, so only switch for URL rasters.
+      const hasUrlBackedRaster = useAppStore
+        .getState()
+        .layers.some(
+          (layer) =>
+            isRasterControlStoreLayer(layer) &&
+            typeof layer.source.url === "string" &&
+            layer.source.url &&
+            !localFiles.has(layer.id),
+        );
+      if (hasUrlBackedRaster && control.getEngine() !== "maplibre-gl-raster") {
+        control.setEngine("maplibre-gl-raster");
+      }
+
       for (const layer of useAppStore.getState().layers) {
         if (!isRasterControlStoreLayer(layer)) continue;
         if (control.getRaster(layer.id)) continue;
