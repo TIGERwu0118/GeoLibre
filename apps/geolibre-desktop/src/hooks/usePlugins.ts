@@ -1051,8 +1051,18 @@ export function createAppAPI(mapControllerRef?: RefObject<MapController | null>)
     addLayerGroup: (name?: string, layerIds?: string[]) =>
       useAppStore.getState().addLayerGroup(name, layerIds),
     removeLayerGroup: (id: string) => useAppStore.getState().removeLayerGroup(id),
-    fitBounds: (bounds: [number, number, number, number]) =>
-      mapControllerRef?.current?.fitBounds(bounds),
+    fitBounds: (bounds: [number, number, number, number]) => {
+      // A fit issued right after a layer add (map still ingesting the source)
+      // is silently dropped by MapLibre; defer to the next idle frame so the
+      // camera move always lands. An idle map fits immediately.
+      const map = mapControllerRef?.current?.getMap?.();
+      const doFit = () => mapControllerRef?.current?.fitBounds(bounds);
+      if (map && typeof map.once === "function" && !map.loaded()) {
+        map.once("idle", doFit);
+      } else {
+        doFit();
+      }
+    },
     getMap: () => mapControllerRef?.current?.getMap() ?? null,
     getProjectSnapshot: () => buildProjectEgressSnapshot(mapControllerRef ?? { current: null }),
     openExternalUrl: (url: string) => void openExternalLink(url),
