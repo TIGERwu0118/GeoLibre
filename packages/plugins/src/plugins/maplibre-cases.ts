@@ -209,6 +209,7 @@ function buildPanel(container: HTMLElement): () => void {
         section.yearSelect.append(option);
       }
     }
+    section.loadButton.textContent = labels.loadYear(selectedYear(section) ?? "…");
     renderList(section);
   };
 
@@ -240,7 +241,10 @@ function buildPanel(container: HTMLElement): () => void {
     const section: TaskSection = { task: descriptor.id, details, yearSelect, loadButton, list, products: [] };
     sections.set(descriptor.id, section);
 
-    yearSelect.addEventListener("change", () => renderList(section));
+    yearSelect.addEventListener("change", () => {
+      section.loadButton.textContent = labels.loadYear(selectedYear(section) ?? "…");
+      renderList(section);
+    });
     loadButton.addEventListener("click", () => {
       void loadSection(section);
     });
@@ -297,15 +301,31 @@ function buildPanel(container: HTMLElement): () => void {
   });
 
   const ensureLoaded = async (item: ParsedCaseProduct): Promise<void> => {
-    const existing = layerByName(item.name);
-    if (!existing) await addProduct(item, (message) => (status.textContent = message));
-    const bbox = productBbox(item.product);
-    if (bbox) appRef?.fitBounds?.(bbox);
-    status.textContent = labels.added(item.name);
+    try {
+      // 报告类产品（md）不上图：定位到产品范围并展示指标摘要。
+      if (item.product.format === "md") {
+        const bbox = productBbox(item.product);
+        if (bbox) appRef?.fitBounds?.(bbox);
+        status.textContent = `报告（不上图）：${metricsSummary(item.product) || item.name}`;
+        return;
+      }
+      const existing = layerByName(item.name);
+      if (!existing) await addProduct(item, (message) => (status.textContent = message));
+      const bbox = productBbox(item.product);
+      if (bbox) appRef?.fitBounds?.(bbox);
+      status.textContent = labels.added(item.name);
+    } catch (error: unknown) {
+      status.textContent = labels.failed(
+        item.name,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   };
 
   const loadSection = async (section: TaskSection): Promise<void> => {
-    const items = productsForYear(section, selectedYear(section));
+    const items = productsForYear(section, selectedYear(section)).filter(
+      (item) => item.product.format !== "md",
+    );
     let added = 0;
     let skipped = 0;
     let failed = 0;
