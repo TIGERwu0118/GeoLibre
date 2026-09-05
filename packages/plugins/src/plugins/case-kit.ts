@@ -51,6 +51,7 @@ export interface CaseProduct {
   method?: string;
   source?: string[];
   status?: string;
+  title?: string;
 }
 
 export interface ParsedCaseProduct {
@@ -73,12 +74,14 @@ const TYPE_LABELS: Record<string, string> = {
   eco_index: "生态指数",
   landcover: "土地分类",
   eco_indicator: "生态指标",
+  annotation_qa: "标注QA",
 };
 
 /** 框架级产品的 et_id 占位——不进图层名，避免 "ALL" 这类噪音。 */
 const FRAME_ET_IDS = new Set(["ALL", "P113FULL", "BUF500"]);
 
 export function productLayerName(p: CaseProduct): string {
+  if (p.title) return p.title;
   const base = TYPE_LABELS[p.type] ?? p.type;
   const year = p.year ? ` ${p.year}` : "";
   const site = p.mine_name
@@ -161,6 +164,31 @@ export const CASE_STYLE_PRESETS: Record<string, CaseStylePreset> = {
   },
   landcover: { kind: "cog", options: { bands: "1", opacity: 0.85 } },
   imagery_cog: { kind: "cog", options: { rescaleMin: 0, rescaleMax: 255 } },
+  // 标注 QA 六类分色（与 Label Studio build_labelstudio_masks.LABEL_COLORS 一致）
+  annotation_露天采坑: {
+    kind: "geojson",
+    style: { strokeColor: "#ff4d4f", strokeWidth: 1, fillColor: "#ff4d4f", fillOpacity: 0.45 },
+  },
+  annotation_固体废弃物: {
+    kind: "geojson",
+    style: { strokeColor: "#faad14", strokeWidth: 1, fillColor: "#faad14", fillOpacity: 0.45 },
+  },
+  annotation_矿山道路: {
+    kind: "geojson",
+    style: { strokeColor: "#1677ff", strokeWidth: 1, fillColor: "#1677ff", fillOpacity: 0.45 },
+  },
+  annotation_裸露地表: {
+    kind: "geojson",
+    style: { strokeColor: "#8c8c8c", strokeWidth: 1, fillColor: "#8c8c8c", fillOpacity: 0.45 },
+  },
+  annotation_恢复治理: {
+    kind: "geojson",
+    style: { strokeColor: "#52c41a", strokeWidth: 1, fillColor: "#52c41a", fillOpacity: 0.45 },
+  },
+  annotation_工业广场: {
+    kind: "geojson",
+    style: { strokeColor: "#722ed1", strokeWidth: 1, fillColor: "#722ed1", fillOpacity: 0.45 },
+  },
 };
 
 export const DEFAULT_PRESET: CaseStylePreset = {

@@ -302,8 +302,9 @@ function buildPanel(container: HTMLElement): () => void {
 
   const ensureLoaded = async (item: ParsedCaseProduct): Promise<void> => {
     try {
-      // 报告类产品（md）不上图：定位到产品范围并展示指标摘要。
-      if (item.product.format === "md") {
+      // 非图层产品（报告/指标表）不上图：定位到产品范围并展示指标摘要。
+      const LOADABLE = new Set(["geojson", "cog", "tif"]);
+      if (!LOADABLE.has(item.product.format)) {
         const bbox = productBbox(item.product);
         if (bbox) appRef?.fitBounds?.(bbox);
         status.textContent = `报告（不上图）：${metricsSummary(item.product) || item.name}`;
@@ -324,7 +325,7 @@ function buildPanel(container: HTMLElement): () => void {
 
   const loadSection = async (section: TaskSection): Promise<void> => {
     const items = productsForYear(section, selectedYear(section)).filter(
-      (item) => item.product.format !== "md",
+      (item) => item.product.format === "geojson" || item.product.format === "cog" || item.product.format === "tif",
     );
     let added = 0;
     let skipped = 0;
