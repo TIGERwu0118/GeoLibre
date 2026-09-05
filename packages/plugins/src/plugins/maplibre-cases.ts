@@ -168,7 +168,13 @@ function buildPanel(container: HTMLElement): () => void {
   const renderList = (section: TaskSection): void => {
     section.list.replaceChildren();
     const year = selectedYear(section);
-    const items = productsForYear(section, year);
+    let items = productsForYear(section, year);
+    if (section.task === "base") {
+      // 底座列表排序：边界/瓦片/InSAR 在前，逐矿 COG 垫底。
+      const rank = (t: string) =>
+        t === "mine_boundary" ? 0 : t === "tile_layer" ? 1 : t.startsWith("insar") ? 2 : 3;
+      items = [...items].sort((a, b) => rank(a.product.type) - rank(b.product.type));
+    }
     if (!items.length) {
       const empty = document.createElement("div");
       empty.style.cssText = "opacity:0.7;font-size:12px;";
@@ -233,6 +239,9 @@ function buildPanel(container: HTMLElement): () => void {
     loadButton.type = "button";
     loadButton.textContent = labels.loadYear("…");
     loadButton.style.cssText = BUTTON_STYLE;
+    // 数据底座无年份口径：隐藏年份下拉，加载按钮一次挂全部底座产品（COG 除外，逐条点选）。
+    const isBase = descriptor.id === "base";
+    yearSelect.style.display = isBase ? "none" : "";
     row.append(yearSelect, loadButton);
     const list = document.createElement("div");
     list.style.cssText = "display:flex;flex-direction:column;gap:4px;";
@@ -303,7 +312,7 @@ function buildPanel(container: HTMLElement): () => void {
   const ensureLoaded = async (item: ParsedCaseProduct): Promise<void> => {
     try {
       // 非图层产品（报告/指标表）不上图：定位到产品范围并展示指标摘要。
-      const LOADABLE = new Set(["geojson", "cog", "tif"]);
+      const LOADABLE = new Set(["geojson", "cog", "tif", "tiles"]);
       if (!LOADABLE.has(item.product.format)) {
         const bbox = productBbox(item.product);
         if (bbox) appRef?.fitBounds?.(bbox);
@@ -324,9 +333,11 @@ function buildPanel(container: HTMLElement): () => void {
   };
 
   const loadSection = async (section: TaskSection): Promise<void> => {
-    const items = productsForYear(section, selectedYear(section)).filter(
-      (item) => item.product.format === "geojson" || item.product.format === "cog" || item.product.format === "tif",
-    );
+    const all = productsForYear(section, section.task === "base" ? null : selectedYear(section));
+    // 数据底座一键加载除逐矿 COG 外的全部产品（COG 数量大，逐条点选）。
+    const items = section.task === "base"
+      ? all.filter((item) => item.product.type !== "imagery_cog")
+      : all.filter((item) => item.product.format !== "md");
     let added = 0;
     let skipped = 0;
     let failed = 0;
@@ -351,6 +362,14 @@ function buildPanel(container: HTMLElement): () => void {
     item: ParsedCaseProduct,
     onStatus: (message: string) => void,
   ): Promise<void> => {
+    if (item.product.format === "tiles") {
+      if (typeof appRef?.addTileLayer !== "function") {
+        throw new Error("宿主未提供 addTileLayer 接口");
+      }
+      const id = appRef.addTileLayer(item.name, item.url, { tileSize: 256 });
+      trackedLayerIds.add(id);
+      return;
+    }
     const preset = presetFor(item.product.style_preset ?? item.product.type);
     if (preset.kind === "cog") {
       if (typeof appRef?.addCogLayer !== "function") {

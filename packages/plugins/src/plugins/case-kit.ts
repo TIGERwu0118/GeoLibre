@@ -80,6 +80,7 @@ const TYPE_LABELS: Record<string, string> = {
   landcover: "土地分类",
   eco_indicator: "生态指标",
   annotation_qa: "标注QA",
+  tile_layer: "矿区影像瓦片（50 矿合并）",
 };
 
 /** 框架级产品的 et_id 占位——不进图层名，避免 "ALL" 这类噪音。 */
