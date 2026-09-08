@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { FeatureCollection } from "geojson";
 
 import {
+  decorateSamGeoResult,
   reprojectSamGeoResult,
   sanitizeSamGeoState,
 } from "../packages/plugins/src/plugins/maplibre-samgeo";
@@ -97,4 +98,27 @@ test("reprojectSamGeoResult refuses non-WGS84 results with no known projection",
     reprojectSamGeoResult({ type: "FeatureCollection", features: [] }, null).features,
     [],
   );
+});
+
+test("decorateSamGeoResult keeps server attributes and adds editable provenance", () => {
+  const result = decorateSamGeoResult(square(10, 20), {
+    prompt: "露天采坑",
+    mode: "text",
+    sourceLayer: "mine imagery",
+    sourceUrl: "http://127.0.0.1:8767/mine.tif",
+    metadata: { job_id: "job-1", score: 0.87, category: "露天采坑" },
+  });
+  const feature = result.features[0]!;
+  assert.equal(feature.id, "sam3-job-1-1");
+  assert.deepEqual(feature.properties, {
+    sam3_prompt: "露天采坑",
+    sam3_category: "露天采坑",
+    sam3_mode: "text",
+    sam3_score: 0.87,
+    sam3_job_id: "job-1",
+    sam3_source_layer: "mine imagery",
+    sam3_source_url: "http://127.0.0.1:8767/mine.tif",
+    sam3_review_status: "candidate",
+    sam3_editable: true,
+  });
 });

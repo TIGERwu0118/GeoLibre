@@ -7581,6 +7581,10 @@
     "segmenting": "正在分割…",
     "noObjects": "未找到任何对象。",
     "added": "已添加 {{count}} 个要素{{layer}}。",
+    "editResult": "编辑分割结果",
+    "activatingEditor": "正在启用 GeoEditor…",
+    "editingResult": "GeoEditor 已启用，可以在地图上调整斑块并保存。",
+    "editorUnavailable": "无法为该结果启用 GeoEditor。",
     "badResponse": "SamGeo API 未返回 GeoJSON FeatureCollection。",
     "unknownProjection": "结果不是 WGS84 坐标，且图像未携带可读取的投影信息，因此无法放置到地图上。请使用带地理参考的 GeoTIFF。"
   },

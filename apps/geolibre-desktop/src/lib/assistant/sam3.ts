@@ -1,6 +1,10 @@
 import { getRuntimeEnvironment, useAppStore, type GeoLibreLayer } from "@geolibre/core";
 import type { MapController } from "@geolibre/map";
-import { rasterProjection, reprojectSamGeoResult } from "@geolibre/plugins/maplibre-samgeo";
+import {
+  decorateSamGeoResult,
+  rasterProjection,
+  reprojectSamGeoResult,
+} from "@geolibre/plugins/maplibre-samgeo";
 import type { InvokableTool, JSONValue } from "@strands-agents/sdk";
 import { tool } from "@strands-agents/sdk";
 import type { FeatureCollection } from "geojson";
@@ -238,7 +242,16 @@ export function createSam3Tools(deps: {
         const meta = collection.sam3 ?? {};
         // The polygons come back in the raster's native CRS; the projection is
         // read from the uploaded bytes (same path the SamGeo panel uses).
-        const geojson = reprojectSamGeoResult(collection, await rasterProjection(bytes));
+        const geojson = decorateSamGeoResult(
+          reprojectSamGeoResult(collection, await rasterProjection(bytes)),
+          {
+            prompt: input.prompt,
+            mode: "text",
+            sourceLayer: layer.name,
+            sourceUrl: url,
+            metadata: meta,
+          },
+        );
 
         let addedLayerId: string | null = null;
         if (input.add_as_layer !== false && geojson.features.length > 0) {

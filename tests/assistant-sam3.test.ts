@@ -194,6 +194,9 @@ describe("sam3_segment (mocked fetch)", () => {
       const added = useAppStore.getState().layers.find((layer) => layer.id === result.addedLayerId);
       assert.equal(added?.name, "SAM3 露天采坑");
       assert.equal(added?.geojson?.features.length, 2);
+      assert.equal(added?.geojson?.features[0]?.properties?.score, 0.87);
+      assert.equal(added?.geojson?.features[0]?.properties?.sam3_job_id, "job-7");
+      assert.equal(added?.geojson?.features[0]?.properties?.sam3_source_layer, "mine imagery");
     } finally {
       globalThis.fetch = originalFetch;
       restore();

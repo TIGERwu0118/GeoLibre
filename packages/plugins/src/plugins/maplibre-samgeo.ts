@@ -1,8 +1,9 @@
 /**
  * Interactive SAM3 segmentation backed by segment-geospatial's REST API.
  *
- * The panel deliberately talks to samgeo-api directly (default :8000). This
- * keeps it useful in both the browser and desktop builds and mirrors SamGeo's
+ * The panel talks to the SamGeo-compatible API directly. Its default is the
+ * mine2026 SAM3 façade on the local SSH forward (:8766), while the editable
+ * API URL keeps it useful with a standalone SamGeo service as well. It mirrors SamGeo's
  * own interactive map: text, foreground/background points, a similarity box,
  * and automatic mask generation all share one uploaded image and model cache.
  */
@@ -13,6 +14,8 @@ import proj4 from "proj4";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useAppStore } from "@geolibre/core";
 import type { GeoLibreAppAPI, GeoLibrePlugin } from "../types";
+import { GEO_EDITOR_PLUGIN_ID } from "../plugin-ids";
+import { startLayerGeometryEdit } from "./maplibre-geo-editor";
 
 export const SAMGEO_PLUGIN_ID = "maplibre-samgeo";
 const PANEL_ID = "samgeo-segmentation-panel";
@@ -20,7 +23,8 @@ const PROMPT_SOURCE = "samgeo-prompt-source";
 const PROMPT_FILL = "samgeo-prompt-fill";
 const PROMPT_LINE = "samgeo-prompt-line";
 const PROMPT_POINTS = "samgeo-prompt-points";
-const DEFAULT_API_URL = "http://127.0.0.1:8000";
+export const DEFAULT_SAM3_API_URL = "http://127.0.0.1:8766";
+const DEFAULT_API_URL = DEFAULT_SAM3_API_URL;
 export const SAMGEO_API_DOCS_URL = "https://samgeo.gishub.org/api/";
 
 type Mode = "text" | "points" | "box" | "automatic";
@@ -99,14 +103,18 @@ export interface SamGeoLabels {
   segmenting: string;
   noObjects: string;
   added: (count: number, layer: string) => string;
+  editResult: string;
+  activatingEditor: string;
+  editingResult: string;
+  editorUnavailable: string;
   badResponse: string;
   unknownProjection: string;
 }
 
 const DEFAULT_LABELS: SamGeoLabels = {
-  panelTitle: "SamGeo Segmentation",
-  intro: "Segment imagery with SAM3 using text, points, a box, or automatic masks.",
-  apiUrl: "SamGeo API URL",
+  panelTitle: "SAM3 Segmentation",
+  intro: "Segment imagery with SAM3; the result is an editable GeoJSON layer.",
+  apiUrl: "SAM3 service URL",
   checkConnection: "Check connection",
   notChecked: "Not checked",
   checking: "Checking…",
@@ -157,6 +165,10 @@ const DEFAULT_LABELS: SamGeoLabels = {
   segmenting: "Segmenting…",
   noObjects: "No objects found.",
   added: (count, layer) => `Added ${count} feature(s)${layer}.`,
+  editResult: "Edit result",
+  activatingEditor: "Activating GeoEditor…",
+  editingResult: "GeoEditor is active — adjust the result on the map, then save.",
+  editorUnavailable: "Could not activate GeoEditor for this result.",
   badResponse: "SamGeo API did not return a GeoJSON FeatureCollection.",
   unknownProjection:
     "The result is not in WGS84 and the image carries no readable projection, so it cannot be placed on the map. Use a georeferenced GeoTIFF.",
@@ -173,10 +185,10 @@ export function setSamGeoLabels(next: Partial<SamGeoLabels>): void {
 const DEFAULT_STATE: SamGeoState = {
   apiUrl: DEFAULT_API_URL,
   mode: "text",
-  modelId: "facebook/sam3.1",
+  modelId: "sam3",
   sam2ModelId: "sam2-hiera-large",
   backend: "meta",
-  prompt: "building",
+  prompt: "露天采坑",
   confidence: 0.5,
   minSize: 10,
   maxSize: 0,
@@ -240,6 +252,7 @@ let promptPoints: PromptPoint[] = [];
 let promptBox: [number, number, number, number] | null = null;
 let cancelDrawing: (() => void) | null = null;
 let panelContainer: HTMLElement | null = null;
+let lastResultLayerId: string | null = null;
 /** In-flight requests, aborted when the panel closes. Health checks and
  * segmentation run independently so one never cancels the other. */
 let pendingSegmentation: AbortController | null = null;
@@ -579,6 +592,63 @@ export function reprojectSamGeoResult(
   return { type: "FeatureCollection", features };
 }
 
+/** Metadata returned by the mine2026 SAM3 façade. */
+export interface SamGeoResultMetadata {
+  job_id?: string;
+  score?: number;
+  category?: string;
+  prompt?: string;
+  warnings?: string[];
+}
+
+/** Context copied onto every generated feature so the result remains auditable. */
+export interface SamGeoResultContext {
+  prompt: string;
+  mode?: Mode | "text";
+  sourceLayer?: string;
+  sourceUrl?: string;
+  metadata?: SamGeoResultMetadata;
+}
+
+/**
+ * Mark a SAM result as a first-class, editable GeoJSON result while preserving
+ * all server properties (`score`, `category`, `value`, etc.). The attributes are
+ * deliberately namespaced so GeoLibre's existing feature-properties editor can
+ * show provenance without colliding with a model's own fields.
+ */
+export function decorateSamGeoResult(
+  fc: FeatureCollection,
+  context: SamGeoResultContext,
+): FeatureCollection {
+  const prompt = context.prompt.trim();
+  const metadata = context.metadata;
+  return {
+    type: "FeatureCollection",
+    features: fc.features.map((feature, index) => {
+      const properties: Record<string, unknown> = { ...(feature.properties ?? {}) };
+      const generated: Record<string, unknown> = {
+        sam3_prompt: prompt || undefined,
+        sam3_category: (metadata?.category ?? prompt) || undefined,
+        sam3_mode: context.mode,
+        sam3_score: metadata?.score,
+        sam3_job_id: metadata?.job_id,
+        sam3_source_layer: context.sourceLayer,
+        sam3_source_url: context.sourceUrl,
+        sam3_review_status: "candidate",
+        sam3_editable: true,
+      };
+      for (const [key, value] of Object.entries(generated)) {
+        if (value !== undefined && properties[key] === undefined) properties[key] = value;
+      }
+      return {
+        ...feature,
+        id: feature.id ?? `sam3-${metadata?.job_id ?? "result"}-${index + 1}`,
+        properties,
+      };
+    }),
+  };
+}
+
 function appendCommon(form: FormData, req: SegmentationSnapshot): void {
   form.append("output_format", "geojson");
   form.append("min_size", String(req.minSize));
@@ -613,6 +683,7 @@ async function requestSegmentation(
   bytes: ArrayBuffer,
   req: SegmentationSnapshot,
   signal: AbortSignal,
+  source?: { layerName?: string; url?: string },
 ): Promise<FeatureCollection> {
   const form = new FormData();
   form.append("file", file, file.name);
@@ -621,6 +692,7 @@ async function requestSegmentation(
   if (req.mode === "text") {
     endpoint = "/segment/text";
     form.append("prompt", req.prompt.trim());
+    form.append("model_version", "sam3");
     form.append("backend", req.backend);
     form.append("confidence_threshold", String(req.confidence));
   } else if (req.mode === "automatic") {
@@ -650,7 +722,15 @@ async function requestSegmentation(
   // The API writes each mask's confidence as a `score` property of the
   // GeoJSON output (segment-geospatial >= 1.4.2), so one request is enough.
   const result = await postSegmentation(endpoint, form, req.apiUrl, signal);
-  return reprojectSamGeoResult(result, await rasterProjection(bytes));
+  const metadata = (result as FeatureCollection & { sam3?: SamGeoResultMetadata }).sam3;
+  const reprojected = reprojectSamGeoResult(result, await rasterProjection(bytes));
+  return decorateSamGeoResult(reprojected, {
+    prompt: req.prompt,
+    mode: req.mode,
+    sourceLayer: source?.layerName ?? file.name,
+    sourceUrl: source?.url,
+    metadata,
+  });
 }
 
 /** Raster store layers whose GeoTIFF bytes the panel can upload to the API. */
@@ -935,6 +1015,45 @@ function buildPanel(container: HTMLElement): () => void {
   model.addEventListener("change", () => {
     state.modelId = model.value;
   });
+  const editResult = button(labels.editResult);
+  editResult.dataset.testid = "samgeo-edit-result";
+  const syncEditButton = () => {
+    editResult.disabled =
+      !lastResultLayerId ||
+      !useAppStore.getState().layers.some((layer) => layer.id === lastResultLayerId);
+  };
+  syncEditButton();
+  editResult.addEventListener("click", async () => {
+    const layerId = lastResultLayerId;
+    const currentApp = appRef;
+    if (!layerId || !currentApp) return;
+    if (!useAppStore.getState().layers.some((layer) => layer.id === layerId)) {
+      lastResultLayerId = null;
+      syncEditButton();
+      return;
+    }
+    editResult.disabled = true;
+    status.textContent = labels.activatingEditor;
+    try {
+      // Try the already-active editor first. The plugin manager intentionally
+      // returns false when asked to activate an already-active plugin.
+      let started = await startLayerGeometryEdit(currentApp, layerId);
+      if (!started) {
+        await currentApp.activatePlugin?.(GEO_EDITOR_PLUGIN_ID);
+        started = await startLayerGeometryEdit(currentApp, layerId);
+      }
+      if (!started) {
+        status.textContent = labels.editorUnavailable;
+        return;
+      }
+      useAppStore.getState().selectLayer(layerId);
+      status.textContent = labels.editingResult;
+    } catch (error) {
+      status.textContent = `${labels.editorUnavailable} ${errorMessage(error)}`;
+    } finally {
+      syncEditButton();
+    }
+  });
   const clear = button(labels.clearPrompts);
   clear.addEventListener("click", () => {
     clearPrompts(appRef?.getMap?.());
@@ -984,7 +1103,10 @@ function buildPanel(container: HTMLElement): () => void {
           ? await fileFromLayer({ name: layerChoice.name, url: layerChoice.url }, controller.signal)
           : (file as File);
       const bytes = await image.arrayBuffer();
-      const result = await requestSegmentation(image, bytes, req, controller.signal);
+      const result = await requestSegmentation(image, bytes, req, controller.signal, {
+        layerName: layerChoice?.name ?? image.name,
+        url: layerChoice?.url ?? undefined,
+      });
       // The panel was closed (or a newer request started) while this one was
       // in flight: drop the result rather than adding a layer the user has
       // moved on from.
@@ -994,7 +1116,9 @@ function buildPanel(container: HTMLElement): () => void {
         return;
       }
       const suffix = req.mode === "text" ? `: ${req.prompt.trim()}` : ` (${req.mode})`;
-      const layerId = appRef?.addGeoJsonLayer(`SamGeo${suffix}`, result);
+      const layerId = appRef?.addGeoJsonLayer(`SAM3${suffix}`, result);
+      lastResultLayerId = layerId ?? null;
+      syncEditButton();
       const bounds = result.features.flatMap((feature) => {
         const coords: Position[] = [];
         mapPositions((feature.geometry as { coordinates?: unknown } | null)?.coordinates, (p) => {
@@ -1058,7 +1182,7 @@ function buildPanel(container: HTMLElement): () => void {
 
   const actions = element("div");
   actions.style.cssText = `${css.row}flex-wrap:wrap;margin-bottom:8px;`;
-  actions.append(run, clear);
+  actions.append(run, editResult, clear);
   root.append(
     intro,
     field(labels.apiUrl, api),

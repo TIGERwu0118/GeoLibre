@@ -586,8 +586,12 @@ export { maplibreStreetViewPlugin } from "./plugins/maplibre-streetview";
 export {
   maplibreSamGeoPlugin,
   SAMGEO_PLUGIN_ID,
+  DEFAULT_SAM3_API_URL,
+  decorateSamGeoResult,
   setSamGeoLabels,
   type SamGeoLabels,
+  type SamGeoResultContext,
+  type SamGeoResultMetadata,
 } from "./plugins/maplibre-samgeo";
 export {
   maplibreMiningPlugin,

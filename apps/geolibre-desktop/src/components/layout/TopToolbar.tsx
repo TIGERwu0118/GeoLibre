@@ -1040,6 +1040,10 @@ export function TopToolbar({
       segmenting: t("samgeoPlugin.segmenting"),
       noObjects: t("samgeoPlugin.noObjects"),
       added: (count, layer) => t("samgeoPlugin.added", { count, layer }),
+      editResult: t("samgeoPlugin.editResult"),
+      activatingEditor: t("samgeoPlugin.activatingEditor"),
+      editingResult: t("samgeoPlugin.editingResult"),
+      editorUnavailable: t("samgeoPlugin.editorUnavailable"),
       badResponse: t("samgeoPlugin.badResponse"),
       unknownProjection: t("samgeoPlugin.unknownProjection"),
     });
